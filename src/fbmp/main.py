@@ -8,7 +8,9 @@ Commands:
   login        interactive FB login bootstrap (headed browser)
   test-email   send a fake hot alert + digest to verify Gmail setup
   targets-lint validate targets.yaml and print the effective query plan
-  eval-replay  re-run stage-1 triage on a saved JSON fixture (no browser)
+  eval-replay  re-run stage-1/2 evaluation on a saved JSON fixture (no browser)
+  value        market-value estimate for one listing URL (browser only if the
+               listing isn't already in the DB or kv cache)
 """
 
 from __future__ import annotations
@@ -665,6 +667,102 @@ def cmd_targets_lint(args) -> int:
     return 0
 
 
+def cmd_value(args) -> int:
+    """Market-value estimate for one listing URL/id. Reads pipeline data but
+    never writes it: unknown listings are cached in kv, not in `listings`."""
+    cfg = load_config(require_email=False)
+    setup_logging(cfg)
+
+    m = scraper.ITEM_ID_RE.search(args.url)
+    lid = m.group(1) if m else (args.url.strip() if args.url.strip().isdigit() else None)
+    if not lid:
+        print(f"not a marketplace listing URL or id: {args.url!r}", file=sys.stderr)
+        return 2
+
+    store = Store(cfg.db_path)
+    try:
+        row = store.get_listing(lid)
+        listing = {k: row[k] for k in row.keys()} if row else {}
+        cache_key = f"value_detail:{lid}"
+        source = None
+        if not args.refresh:
+            if listing.get("description"):
+                source = "watcher db"
+            else:
+                cached = store.kv_get(cache_key)
+                if cached:
+                    listing = {**cached, **{k: v for k, v in listing.items() if v is not None}}
+                    source = "cache"
+
+        if source is None:  # one real page load, sharing the cycle lock/session
+            try:
+                lock = Lock(LOCK_PATH)
+                lock.acquire()
+            except AlreadyRunning as e:
+                print(f"a watcher run holds the session ({e}) — try again in a few minutes",
+                      file=sys.stderr)
+                return 1
+            try:
+                pacer = Pacer(cfg, store)
+                url = f"https://www.facebook.com/marketplace/item/{lid}/"
+                with open_browser(cfg) as ctx:
+                    page = ctx.pages[0] if ctx.pages else ctx.new_page()
+                    goto(page, url, pacer)
+                    pacer.sleep(pacer.dwell())
+                    detail = scraper.scrape_detail(page)
+            except Checkpoint as e:
+                health.mark_session_dead(cfg, store, f"security checkpoint at {e}")
+                print("hit a Facebook checkpoint — watcher stood down", file=sys.stderr)
+                return 1
+            except SessionExpired as e:
+                health.mark_session_dead(cfg, store, f"logged-out page at {e}")
+                print("Facebook session expired — run: python -m fbmp.main login",
+                      file=sys.stderr)
+                return 1
+            finally:
+                lock.release()
+            detail = {k: v for k, v in detail.items() if v is not None}
+            if not detail.get("title") and not detail.get("description"):
+                print("could not parse the listing page (removed/sold, or layout change)",
+                      file=sys.stderr)
+                return 1
+            # card-scraped fields (esp. price) are more reliable than detail heuristics
+            listing = {**detail, **{k: v for k, v in listing.items() if v is not None}}
+            store.kv_set(cache_key, detail)
+            source = "live fetch"
+
+        result = evaluate.market_value(cfg, listing)
+        if args.json:
+            print(json.dumps(result, indent=2))
+            return 0
+
+        print(f"\n{result.get('product') or listing.get('title') or lid}")
+        ask = listing.get("price_text") or (
+            f"AU${listing['price_aud']}" if listing.get("price_aud") is not None else None)
+        if ask:
+            print(f"  asking:     {ask}")
+        lo, mid, hi = (result.get("used_value_low_aud"), result.get("used_value_mid_aud"),
+                       result.get("used_value_high_aud"))
+        if lo is not None and hi is not None:
+            mid_s = f" (mid ${mid})" if mid is not None else ""
+            print(f"  used value: ${lo}-${hi} AUD{mid_s}")
+        else:
+            print("  used value: could not be estimated")
+        if result.get("new_price_aud"):
+            print(f"  new price:  ~${result['new_price_aud']}")
+        rating = (result.get("bargain_rating") or "unknown").replace("_", " ")
+        conf = result.get("confidence")
+        print(f"  vs asking:  {rating}" + (f" (confidence {conf})" if conf is not None else ""))
+        for d in result.get("value_drivers") or []:
+            print(f"    - {d}")
+        if result.get("rationale"):
+            print(f"  {result['rationale']}")
+        print(f"  [listing detail: {source}]")
+        return 0
+    finally:
+        store.close()
+
+
 def cmd_eval_replay(args) -> int:
     cfg = load_config(require_email=False)
     setup_logging(cfg)
@@ -739,6 +837,13 @@ def main(argv=None):
     sub.add_parser("login", help="interactive FB login bootstrap").set_defaults(fn=cmd_login)
     sub.add_parser("test-email", help="send test emails").set_defaults(fn=cmd_test_email)
     sub.add_parser("targets-lint", help="validate targets.yaml").set_defaults(fn=cmd_targets_lint)
+
+    v = sub.add_parser("value", help="market-value estimate for a listing URL")
+    v.add_argument("url", help="marketplace listing URL (or bare listing id)")
+    v.add_argument("--refresh", action="store_true",
+                   help="refetch the page even if the listing is known/cached")
+    v.add_argument("--json", action="store_true", help="print the raw JSON result")
+    v.set_defaults(fn=cmd_value)
 
     r = sub.add_parser("eval-replay", help="stage-1/2 evaluation on a JSON fixture")
     r.add_argument("fixture")

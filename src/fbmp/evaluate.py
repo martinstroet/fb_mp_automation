@@ -98,6 +98,13 @@ def verdict(cfg, target, listings: list[dict]) -> dict[str, dict]:
     return _index_results(run_claude_retry(prompt, timeout, model))
 
 
+def market_value(cfg, listing: dict) -> dict:
+    """Standalone market-value estimate for one listing (the `value` command)."""
+    timeout = cfg.get("evaluation", "claude_timeout_seconds", default=180)
+    model = cfg.get("evaluation", "model")
+    return run_claude_retry(prompts.market_value(listing), timeout, model)
+
+
 def queries_for_target(cfg, store, target) -> list[str]:
     """Explicit queries from YAML, else Claude-generated (cached until the
     description changes)."""

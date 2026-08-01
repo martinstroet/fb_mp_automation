@@ -36,6 +36,7 @@ Alias used throughout: `PYTHONPATH=src .venv/bin/python -m fbmp.main <cmd>`
 | `eval-replay tests/fixtures/cards_sample.json` | Stage-1 triage on fixtures, zero FB traffic. **The prompt-tuning loop.** |
 | `eval-replay --stage 2 [--target ID] tests/fixtures/details_sample.json` | Stage-2 verdict on detail-level fixtures + the code-enforced disposition each listing would get. |
 | `targets-lint` | Validate targets.yaml, show effective queries. |
+| `value <listing-url> [--json] [--refresh]` | Market-value range for any listing. Zero FB traffic when the listing is in the DB/kv cache; otherwise one page load (shares the cycle lock). Never writes pipeline state. |
 | `digest [--dry-run]` | Drain/preview digest queue. |
 | `test-email` | Fake hot + digest to the real inbox. |
 

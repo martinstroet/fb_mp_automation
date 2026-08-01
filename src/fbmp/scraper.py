@@ -149,6 +149,28 @@ def scrape_detail(page: Page) -> dict:
     except Exception:
         pass
 
+    try:  # asking price: first standalone price text node in the main column —
+        # on detail pages it sits right under the h1, before any "More like
+        # this" rail, so document order picks the right one
+        price_text = page.evaluate(
+            """() => {
+                const root = document.querySelector('div[role="main"]') || document.body;
+                const re = /^(?:AU?\\$\\s?[\\d,]+(?:\\.\\d{2})?|Free)$/i;
+                const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+                let n;
+                while ((n = walker.nextNode())) {
+                    const t = n.textContent.trim();
+                    if (re.test(t)) return t;
+                }
+                return null;
+            }"""
+        )
+        if price_text:
+            detail["price_text"] = price_text
+            detail["price_aud"] = parse_price_aud(price_text)
+    except Exception:
+        pass
+
     body_text = ""
     try:
         body_text = page.locator("body").inner_text(timeout=10_000)

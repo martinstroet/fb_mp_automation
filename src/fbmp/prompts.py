@@ -140,6 +140,40 @@ Include every listing exactly once."""
     )
 
 
+def market_value(listing: dict) -> str:
+    item = {
+        "title": listing.get("title"),
+        "asking_price": listing.get("price_text") or listing.get("price_aud"),
+        "location": listing.get("location"),
+        "description": (listing.get("description") or "")[:2500] or None,
+        "listed": listing.get("listed_ago_text"),
+        "photo_count_approx": listing.get("image_count"),
+    }
+    return (
+        FRAMING.format(date=dt.date.today().isoformat())
+        + "\n## Listing\n" + json.dumps(item, indent=2)
+        + """
+
+Identify the product (brand, model, variant where determinable) and estimate
+what it would realistically sell for second-hand on the Australian private
+market. Give a range wide enough to cover the condition/variant uncertainty in
+the information above, but no wider.
+
+bargain_rating scale (asking price vs your mid estimate): "well_below_market"
+(≲60%), "below_market" (~60-85%), "market" (~85-110%), "above_market" (>110%),
+"unknown" (cannot identify the product well enough to price it).
+
+Respond with ONLY a single JSON object, no prose, no markdown fences:
+{"product": "best identification of what is being sold",
+"new_price_aud": integer or null,
+"used_value_low_aud": integer or null, "used_value_mid_aud": integer or null,
+"used_value_high_aud": integer or null,
+"bargain_rating": "...", "confidence": 0.0-1.0,
+"value_drivers": ["factors or unknowns that most move the price"],
+"rationale": "one or two lines"}"""
+    )
+
+
 def query_generation(target) -> str:
     return (
         "You generate Facebook Marketplace search queries for an Australian buyer.\n"
