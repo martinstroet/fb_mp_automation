@@ -142,10 +142,21 @@ def scrape_search_cards(page: Page) -> list[dict]:
 def scrape_detail(page: Page) -> dict:
     """Parse the currently-open listing detail page (best effort per field)."""
     detail: dict = {}
-    try:
-        h1 = page.locator("h1").first
-        if h1.count():
-            detail["title"] = h1.inner_text(timeout=5000).strip()
+    try:  # title: h1 scoped to the main column — a page-global first h1 can be
+        # a UI overlay heading ("Notifications"). Tab title as fallback.
+        title = page.evaluate(
+            """() => {
+                const root = document.querySelector('div[role="main"]');
+                const h1 = (root || document).querySelector("h1");
+                if (h1 && h1.innerText.trim()) return h1.innerText.trim();
+                return document.title
+                    .replace(/\\s*\\|\\s*Facebook\\s*$/i, "")
+                    .replace(/^\\s*Marketplace\\s*[-\\u2013\\u2014]\\s*/i, "")
+                    .trim() || null;
+            }"""
+        )
+        if title:
+            detail["title"] = title
     except Exception:
         pass
 
