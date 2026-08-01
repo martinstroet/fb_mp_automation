@@ -1,0 +1,71 @@
+# Global settings. All pacing values are ranges/probabilities — the humanization
+# engine (pacing.py) draws from them; nothing in the FB interaction path is fixed.
+
+marketplace:
+  location_slug: brisbane        # facebook.com/marketplace/<slug>/search — set to your city
+  days_since_listed: 1
+  currency: AUD
+
+browser:
+  headless: true                 # flip to false if FB starts throwing checkpoints
+  channel: chrome                # real Google Chrome, not bundled Chromium
+
+limits:
+  max_searches_per_cycle: 6      # hard cap; actual count drawn per-cycle (see pacing)
+  max_detail_fetches_per_cycle: 5
+  triage_batch_max: 40           # max new listings per stage-1 claude call
+
+pacing:
+  active_hours: [6.5, 23.0]      # no FB traffic outside this window (local time)
+  pre_sleep_minutes: [0, 8]      # random sleep after launchd wake, before any network
+  skip_probability_base: 0.15    # scaled by hour weight: skip = base*(1-weight)/0.1
+                                 # (weight 0.95 -> ~7%, default 0.80 -> ~30%, 0.60 -> ~60%)
+  # hour -> activity weight (higher = more likely to run). Unlisted hours use "default".
+  hour_weights:
+    default: 0.80
+    "7": 0.95
+    "8": 0.95
+    "12": 0.90
+    "13": 0.90
+    "17": 0.95
+    "18": 0.95
+    "19": 0.95
+    "20": 0.95
+    "21": 0.90
+    "15": 0.60
+    "22": 0.60
+  long_gap_probability: 0.03     # per-wake chance of starting a 60-90 min "away" gap
+  long_gap_minutes: [60, 90]
+  searches_per_cycle: [2, 6]     # drawn per cycle, capped by limits.max_searches_per_cycle
+  nav_delay_seconds: [4, 15]     # log-normal-ish, long-tailed
+  dwell_seconds: [5, 25]
+  scroll_flicks: [0, 3]
+  organic_entry_probability: 0.30  # land on /marketplace home first
+  decoy_probability: 0.10          # open one random listing for no reason
+
+evaluation:
+  claude_timeout_seconds: 180
+  hot_min_confidence: 0.6
+  # model: claude-sonnet-5      # optional pin for the claude -p calls; unset = CLI default
+
+# "Worth an offer" candidates: listings priced above the target's bargain level
+# but old enough that the seller may take less — surfaced in their own digest
+# section with a suggested offer price.
+negotiation:
+  enabled: true
+  sweep_probability: 0.25   # chance per cycle that one search drops the 1-day
+                            # filter (relevance sort, no age limit) to find older listings
+  max_price_factor: 1.4     # stale sweeps raise the FB maxPrice filter by this,
+                            # since an offer target's *ask* sits above your budget
+  min_days_listed: 4        # younger than this = seller not yet motivated
+  max_days_listed: 45       # older than this = likely abandoned/stale listing
+
+retention:
+  debug_days: 14       # delete data/debug/<timestamp>-* dumps older than this
+  thumb_days: 60       # delete data/thumbs/*.jpg older than this
+
+alerts:
+  digest_hour: 18
+  send_empty_digest: false       # if queue empty and day healthy, stay silent
+  session_alert_min_hours: 24    # rate-limit "please re-login" emails
+  zero_result_streak_alert: 3    # all-searches-empty cycles before health email

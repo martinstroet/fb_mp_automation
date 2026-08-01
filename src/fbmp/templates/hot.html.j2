@@ -1,0 +1,17 @@
+<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:560px;margin:0 auto;color:#1a1a1a;">
+  <h2 style="margin:16px 0 4px;">🔥 {{ l.title }}</h2>
+  <p style="margin:0 0 12px;color:#555;">{{ l.location or "" }} · matched target: <b>{{ target_id }}</b></p>
+  {% if thumb_cid %}<img src="cid:{{ thumb_cid }}" alt="" style="max-width:100%;border-radius:8px;margin-bottom:12px;">{% endif %}
+  <table style="border-collapse:collapse;font-size:15px;">
+    <tr><td style="padding:4px 12px 4px 0;color:#666;">Asking</td>
+        <td style="padding:4px 0;font-size:20px;"><b>{{ l.price_text or "?" }}</b></td></tr>
+    <tr><td style="padding:4px 12px 4px 0;color:#666;">Estimated value</td>
+        <td style="padding:4px 0;">${{ ev.est_value_aud or "?" }} <span style="color:#0a7d32;">({{ ev.bargain_rating | replace("_"," ") }})</span></td></tr>
+    {% if l.seller_name %}<tr><td style="padding:4px 12px 4px 0;color:#666;">Seller</td>
+        <td style="padding:4px 0;">{{ l.seller_name }}{% if l.seller_joined_year %} · joined FB {{ l.seller_joined_year }}{% endif %}</td></tr>{% endif %}
+  </table>
+  <p style="margin:12px 0;color:#333;">{{ ev.rationale }}</p>
+  <p style="margin:20px 0;">
+    <a href="{{ l.url }}" style="background:#1877f2;color:#fff;text-decoration:none;padding:10px 22px;border-radius:6px;font-weight:600;">Open listing</a>
+  </p>
+</div>

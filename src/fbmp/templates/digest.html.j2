@@ -1,0 +1,77 @@
+<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:640px;margin:0 auto;color:#1a1a1a;">
+  <h2 style="margin:16px 0;">Marketplace digest — {{ date }}</h2>
+
+  {% for target_id, items in groups.items() %}
+  <h3 style="margin:20px 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px;">{{ target_id }}</h3>
+  {% for it in items %}
+  <table style="border-collapse:collapse;width:100%;margin-bottom:14px;">
+    <tr>
+      {% if it.thumb_cid %}
+      <td style="width:110px;vertical-align:top;padding-right:12px;">
+        <img src="cid:{{ it.thumb_cid }}" alt="" style="width:100px;border-radius:6px;">
+      </td>
+      {% endif %}
+      <td style="vertical-align:top;font-size:14px;">
+        <a href="{{ it.url }}" style="font-weight:600;color:#1877f2;text-decoration:none;">{{ it.title }}</a><br>
+        <b>{{ it.price_text or "?" }}</b>
+        {% if it.est_value_aud %} · est ${{ it.est_value_aud }}{% endif %}
+        {% if it.bargain_rating %} · {{ it.bargain_rating | replace("_"," ") }}{% endif %}<br>
+        <span style="color:#666;">{{ it.location or "" }}</span>
+        {% if it.rationale %}<br><span style="color:#444;">{{ it.rationale }}</span>{% endif %}
+      </td>
+    </tr>
+  </table>
+  {% endfor %}
+  {% endfor %}
+
+  {% if offers %}
+  <h3 style="margin:24px 0 8px;color:#8a6d00;border-bottom:1px solid #e8d8a0;padding-bottom:4px;">💬 Worth a lower offer</h3>
+  <p style="margin:0 0 10px;color:#666;font-size:13px;">Listed for a while at a near-miss price — the seller may take less.</p>
+  {% for it in offers %}
+  <table style="border-collapse:collapse;width:100%;margin-bottom:14px;background:#fffdf4;border-radius:6px;">
+    <tr>
+      {% if it.thumb_cid %}
+      <td style="width:110px;vertical-align:top;padding:8px 12px 8px 8px;">
+        <img src="cid:{{ it.thumb_cid }}" alt="" style="width:100px;border-radius:6px;">
+      </td>
+      {% endif %}
+      <td style="vertical-align:top;font-size:14px;padding:8px;">
+        <a href="{{ it.url }}" style="font-weight:600;color:#8a6d00;text-decoration:none;">{{ it.title }}</a><br>
+        Asking <b>{{ it.price_text or "?" }}</b>
+        {% if it.est_value_aud %} · est ${{ it.est_value_aud }}{% endif %}
+        {% if it.suggested_offer_aud %} · <b style="color:#0a7d32;">try ${{ it.suggested_offer_aud }}</b>{% endif %}<br>
+        <span style="color:#666;">{{ it.location or "" }}{% if it.listed_ago_text %} · {{ it.listed_ago_text }}{% endif %}</span>
+        {% if it.rationale %}<br><span style="color:#444;">{{ it.rationale }}</span>{% endif %}
+      </td>
+    </tr>
+  </table>
+  {% endfor %}
+  {% endif %}
+
+  {% if flagged %}
+  <h3 style="margin:24px 0 8px;color:#b00;border-bottom:1px solid #e8b0b0;padding-bottom:4px;">⚠ Flagged as dubious</h3>
+  {% for it in flagged %}
+  <table style="border-collapse:collapse;width:100%;margin-bottom:14px;background:#fff6f6;border-radius:6px;">
+    <tr>
+      {% if it.thumb_cid %}
+      <td style="width:110px;vertical-align:top;padding:8px 12px 8px 8px;">
+        <img src="cid:{{ it.thumb_cid }}" alt="" style="width:100px;border-radius:6px;">
+      </td>
+      {% endif %}
+      <td style="vertical-align:top;font-size:14px;padding:8px;">
+        <a href="{{ it.url }}" style="font-weight:600;color:#b00;text-decoration:none;">{{ it.title }}</a><br>
+        <b>{{ it.price_text or "?" }}</b>{% if it.est_value_aud %} · est ${{ it.est_value_aud }}{% endif %}<br>
+        <span style="color:#666;">{{ it.location or "" }}</span><br>
+        <span style="color:#b00;">flags: {{ it.dubious_reasons | join(", ") | replace("_"," ") }}</span>
+        {% if it.rationale %}<br><span style="color:#444;">{{ it.rationale }}</span>{% endif %}
+      </td>
+    </tr>
+  </table>
+  {% endfor %}
+  {% endif %}
+
+  <p style="margin-top:28px;padding-top:8px;border-top:1px solid #ddd;color:#888;font-size:12px;">
+    Health: {{ health.cycles }} cycles today, {{ health.new_listings }} new listings seen,
+    {{ health.errors }} errors, session {{ "OK" if health.session_ok else "NEEDS RE-LOGIN" }}.
+  </p>
+</div>
