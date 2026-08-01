@@ -20,8 +20,10 @@ usually about optimizing settings/prompts/methodology, not rebuilding.
 - The FB session lives in `data/browser_profile/`. Don't wipe it; re-login is
   `python -m fbmp.main login` (interactive, user-driven).
 - The alert guarantee: `alerts` table `UNIQUE(listing_id, kind)`, claimed
-  transactionally before SMTP send. Don't weaken this — "never report twice"
-  is a core requirement.
+  transactionally before SMTP send (kinds: `hot`, `digest`, `offer`). Don't
+  weaken this — "never report twice **per kind**" is a core requirement. A
+  digested near-miss may legitimately reappear once, as an offer or a hot
+  alert, via the revisit path — never again within the same kind.
 
 ## Commands
 
@@ -73,6 +75,12 @@ Code enforcement in `main.py` (Claude's flags alone are never trusted):
 Discovery: fresh sweeps (`daysSinceListed=1`, newest first) via round-robin
 cursor over all target queries; ~25% of cycles convert one slot to a **stale
 sweep** (no age filter, maxPrice ×1.4) to find negotiation candidates.
+**Revisits** feed the offer pipeline from the other side: each cycle promotes
+0–2 (drawn) previously digested near-miss matches back to `shortlisted` once
+their `first_seen_at` ages into the negotiation window (at most once per
+listing, `revisited_at`); stage 2 then re-checks the authoritative listing
+age and may verdict `offer` (re-reported via `requeue_digest` + the `offer`
+alert kind) or even `hot`.
 
 ## Hard-won scraping facts (don't rediscover these)
 

@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS listings (
   raw_card_json     TEXT,
   raw_detail_json   TEXT,
   sweep             TEXT NOT NULL DEFAULT 'fresh',   -- fresh | stale (discovery sweep type)
+  revisited_at      INTEGER,                         -- negotiation revisit, at most once
   status            TEXT NOT NULL DEFAULT 'new'
 );
 CREATE INDEX IF NOT EXISTS idx_listings_status ON listings(status);
@@ -103,6 +104,7 @@ class Store:
         """Add columns introduced after a DB was first created."""
         for table, col, decl in [
             ("listings", "sweep", "TEXT NOT NULL DEFAULT 'fresh'"),
+            ("listings", "revisited_at", "INTEGER"),  # negotiation revisit, at most once
             ("evaluations", "negotiation", "INTEGER DEFAULT 0"),
             ("evaluations", "suggested_offer_aud", "INTEGER"),
         ]:
@@ -196,6 +198,37 @@ class Store:
             "SELECT * FROM listings WHERE listing_id=?", (listing_id,)
         ).fetchone()
 
+    def revisit_candidates(self, min_age_days: int, max_age_days: int,
+                           limit: int = 20) -> list[sqlite3.Row]:
+        """Digested-and-reported matches that have aged into the negotiation
+        window and were never revisited or offered before, oldest first (closest
+        to aging out). Rating/price/target filters are the caller's job."""
+        now = int(time.time())
+        return self.db.execute(
+            """SELECT l.*, e.target_id AS eval_target_id, e.bargain_rating AS eval_rating
+               FROM listings l
+               JOIN digest_queue q ON q.listing_id = l.listing_id AND q.sent_at IS NOT NULL
+               JOIN evaluations e ON e.id = (SELECT MAX(id) FROM evaluations
+                                             WHERE listing_id = l.listing_id)
+               WHERE l.status = 'queued_digest'
+                 AND l.revisited_at IS NULL
+                 AND e.matched = 1 AND COALESCE(e.dubious, 0) = 0
+                 AND l.first_seen_at <= ? AND l.first_seen_at >= ?
+                 AND NOT EXISTS (SELECT 1 FROM alerts a
+                                 WHERE a.listing_id = l.listing_id AND a.kind = 'offer')
+               ORDER BY l.first_seen_at
+               LIMIT ?""",
+            (now - min_age_days * 86400, now - max_age_days * 86400, limit),
+        ).fetchall()
+
+    def mark_revisited(self, listing_id: str):
+        """Promote an aged listing back into the detail-fetch pipeline (once ever)."""
+        self.db.execute(
+            "UPDATE listings SET revisited_at=?, status='shortlisted' WHERE listing_id=?",
+            (int(time.time()), listing_id),
+        )
+        self.db.commit()
+
     # -- evaluations ---------------------------------------------------
     def record_evaluation(self, listing_id: str, stage: int, ev: dict):
         self.db.execute(
@@ -247,6 +280,18 @@ class Store:
     def queue_digest(self, listing_id: str, target_id: str | None):
         self.db.execute(
             "INSERT OR IGNORE INTO digest_queue(listing_id, target_id, queued_at) VALUES(?,?,?)",
+            (listing_id, target_id, int(time.time())),
+        )
+        self.db.commit()
+
+    def requeue_digest(self, listing_id: str, target_id: str | None):
+        """Re-arm a sent digest row (revisit path). Per-kind alert claims still
+        guarantee at most one appearance per section kind."""
+        self.db.execute(
+            """INSERT INTO digest_queue(listing_id, target_id, queued_at, sent_at)
+               VALUES(?,?,?,NULL)
+               ON CONFLICT(listing_id) DO UPDATE SET
+                 sent_at=NULL, queued_at=excluded.queued_at, target_id=excluded.target_id""",
             (listing_id, target_id, int(time.time())),
         )
         self.db.commit()

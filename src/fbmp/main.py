@@ -241,6 +241,44 @@ def triage_phase(cfg, store, counters: dict):
             store.queue_digest(lid, tid)
 
 
+def revisit_phase(cfg, store):
+    """Negotiation revisits: matched listings that were digested once and have
+    since aged into the negotiation window are promoted back to 'shortlisted'
+    (at most once per listing), so the offer pipeline isn't limited to
+    stale-sweep discoveries. DB-only — the page load happens through the
+    normal capped, margin-ordered detail fetch, and stage 2 re-checks the
+    authoritative "Listed X ago" age."""
+    neg = cfg.get("negotiation", default={}) or {}
+    if not neg.get("enabled", True):
+        return
+    lo, hi = neg.get("revisit_per_cycle", [0, 2])
+    n = random.randint(lo, hi)
+    if n <= 0:
+        return
+    targets = {t.id: t for t in cfg.active_targets()}
+    factor = neg.get("max_price_factor", 1.4)
+    promoted = 0
+    candidates = store.revisit_candidates(
+        neg.get("min_days_listed", 4), neg.get("max_days_listed", 45)
+    )
+    for row in candidates:
+        target = targets.get(row["eval_target_id"])
+        if target is None:
+            continue
+        # wanted level, or one rating step below it (the negotiation near-miss)
+        gap = RATING_ORDER[target.bargain_level] - RATING_ORDER.get(row["eval_rating"], -99)
+        if gap > 1:
+            continue
+        if target.max_price and (row["price_aud"] or 0) > target.max_price * factor:
+            continue
+        store.mark_revisited(row["listing_id"])
+        log.info("revisit: %s (%s) aged into negotiation window",
+                 row["listing_id"], row["title"])
+        promoted += 1
+        if promoted >= n:
+            break
+
+
 def enforced_flags(cfg, listing: dict, r: dict) -> tuple[bool, bool]:
     """Code-enforced (hot, offer) decisions for one stage-2 result — claude's
     flags alone are never trusted. Shared by the live pipeline and eval-replay
@@ -261,10 +299,13 @@ def enforced_flags(cfg, listing: dict, r: dict) -> tuple[bool, bool]:
     )
     neg = cfg.get("negotiation", default={}) or {}
     days = scraper.parse_listed_days(listing.get("listed_ago_text"))
+    # unknown age is tolerated where age is already evidenced another way:
+    # stale-sweep finds, and revisits (whose first_seen_at put them in-window)
     age_ok = (
         days is not None
         and neg.get("min_days_listed", 4) <= days <= neg.get("max_days_listed", 45)
-    ) or (days is None and listing.get("sweep") == "stale")
+    ) or (days is None and (listing.get("sweep") == "stale"
+                            or listing.get("revisited_at") is not None))
     is_offer = (
         neg.get("enabled", True)
         and not is_hot
@@ -328,7 +369,12 @@ def verdict_phase(cfg, store, counters: dict, preview_dir: Path | None = None):
                 store.set_status(lid, "rejected")
             else:  # digest, incl. dubious-but-matching (flags shown in digest)
                 store.set_status(lid, "queued_digest")
-                store.queue_digest(lid, tid)
+                if l.get("revisited_at"):
+                    # revisit outcome: re-arm the sent digest row; per-kind
+                    # claims decide what may actually be reported again
+                    store.requeue_digest(lid, tid)
+                else:
+                    store.queue_digest(lid, tid)
 
 
 def send_hot_alert(cfg, store, listing: dict, ev: dict, target_id: str, counters, preview_dir):
@@ -410,6 +456,8 @@ def cmd_cycle(args) -> int:
         else:
             plan = build_query_plan(cfg, store)
             searches = pick_searches(store, plan, pacer.searches_this_cycle())
+
+        revisit_phase(cfg, store)
 
         preview_dir = (cfg.debug_dir / "preview") if args.dry_run else None
         try:
@@ -509,22 +557,28 @@ def cmd_digest(args) -> int:
             store.finish_run(run_id, note="dry_run")
             return 0
 
-        # Claim transactionally before SMTP ("never report twice"). An item whose
-        # claim is already taken was sent by an earlier attempt that died before
-        # marking the queue — mark it sent now, keep it out of this email.
-        def claimed(it):
-            if store.try_claim_alert(it["listing_id"], "digest"):
+        # Claim transactionally before SMTP: at most one report per (listing,
+        # kind) — plain/flagged rows claim 'digest', the offers section claims
+        # 'offer', so a digested near-miss may return once as an offer but
+        # nothing repeats within its kind. An item whose claim is already taken
+        # was sent by an earlier attempt that died before marking the queue —
+        # mark it sent now, keep it out of this email.
+        def claimed(it, kind):
+            if store.try_claim_alert(it["listing_id"], kind):
                 return True
-            log.warning("digest item %s already claimed — not resending", it["listing_id"])
+            log.warning("digest item %s already claimed as %s — not resending",
+                        it["listing_id"], kind)
             store.mark_digest_sent([it["listing_id"]])
             return False
 
         groups = {tid: kept for tid, items in groups.items()
-                  if (kept := [it for it in items if claimed(it)])}
-        offers = [it for it in offers if claimed(it)]
-        flagged = [it for it in flagged if claimed(it)]
-        sent_ids = [it["listing_id"] for items in groups.values() for it in items]
-        sent_ids += [it["listing_id"] for it in offers] + [it["listing_id"] for it in flagged]
+                  if (kept := [it for it in items if claimed(it, "digest")])}
+        offers = [it for it in offers if claimed(it, "offer")]
+        flagged = [it for it in flagged if claimed(it, "digest")]
+        digest_ids = [it["listing_id"] for items in groups.values() for it in items]
+        digest_ids += [it["listing_id"] for it in flagged]
+        offer_ids = [it["listing_id"] for it in offers]
+        sent_ids = digest_ids + offer_ids
         if not sent_ids:
             log.info("digest: every pending item was already sent")
             store.finish_run(run_id, note="empty")
@@ -533,7 +587,8 @@ def cmd_digest(args) -> int:
         try:
             notify.send_digest(cfg.email, groups, offers, flagged, hstats)
         except Exception:
-            store.release_alerts(sent_ids, "digest")  # roll back so tomorrow retries
+            store.release_alerts(digest_ids, "digest")  # roll back so tomorrow retries
+            store.release_alerts(offer_ids, "offer")
             raise
         store.mark_digest_sent(sent_ids)
         log.info("digest sent: %d items", len(sent_ids))

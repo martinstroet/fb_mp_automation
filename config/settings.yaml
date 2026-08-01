@@ -59,6 +59,9 @@ negotiation:
                             # since an offer target's *ask* sits above your budget
   min_days_listed: 4        # younger than this = seller not yet motivated
   max_days_listed: 45       # older than this = likely abandoned/stale listing
+  revisit_per_cycle: [0, 2] # drawn per cycle: previously digested near-miss
+                            # matches re-shortlisted once they age into the
+                            # window (each listing revisited at most once)
 
 retention:
   debug_days: 14       # delete data/debug/<timestamp>-* dumps older than this
