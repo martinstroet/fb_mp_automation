@@ -26,11 +26,13 @@ def new_cid(path: str | None) -> str | None:
     return None
 
 
-def build_html_email(email_cfg, subject: str, html: str, inline_images: dict[str, str]) -> EmailMessage:
-    """inline_images: {cid: local_path} — cids must already appear in the html."""
+def build_html_email(email_cfg, subject: str, html: str, inline_images: dict[str, str],
+                     to: str | None = None) -> EmailMessage:
+    """inline_images: {cid: local_path} — cids must already appear in the html.
+    `to` overrides the default destination (per-target routing)."""
     msg = EmailMessage()
     msg["From"] = email_cfg.address
-    msg["To"] = email_cfg.to
+    msg["To"] = to or email_cfg.to
     msg["Subject"] = subject
     msg.add_alternative(html, subtype="html")
     html_part = msg.get_payload()[0]
@@ -47,7 +49,8 @@ def send(email_cfg, msg: EmailMessage):
         s.send_message(msg)
 
 
-def compose_hot(email_cfg, listing: dict, ev: dict, target_id: str) -> EmailMessage:
+def compose_hot(email_cfg, listing: dict, ev: dict, target_id: str,
+                to: str | None = None) -> EmailMessage:
     est = ev.get("est_value_aud")
     subject = f"🔥 FB MP: {listing.get('title') or 'listing'} — {listing.get('price_text') or '?'}"
     if est:
@@ -57,15 +60,15 @@ def compose_hot(email_cfg, listing: dict, ev: dict, target_id: str) -> EmailMess
         l=listing, ev=ev, target_id=target_id, thumb_cid=cid
     )
     images = {cid: listing["thumb_path"]} if cid else {}
-    return build_html_email(email_cfg, subject, html, images)
+    return build_html_email(email_cfg, subject, html, images, to=to)
 
 
-def send_hot(email_cfg, listing: dict, ev: dict, target_id: str):
-    send(email_cfg, compose_hot(email_cfg, listing, ev, target_id))
+def send_hot(email_cfg, listing: dict, ev: dict, target_id: str, to: str | None = None):
+    send(email_cfg, compose_hot(email_cfg, listing, ev, target_id, to=to))
 
 
 def compose_digest(email_cfg, groups: dict[str, list[dict]], offers: list[dict],
-                   flagged: list[dict], health: dict) -> EmailMessage:
+                   flagged: list[dict], health: dict, to: str | None = None) -> EmailMessage:
     images: dict[str, str] = {}
     for items in list(groups.values()) + [offers, flagged]:
         for it in items:
@@ -82,11 +85,12 @@ def compose_digest(email_cfg, groups: dict[str, list[dict]], offers: list[dict],
         flagged=flagged,
         health=health,
     )
-    return build_html_email(email_cfg, subject, html, images)
+    return build_html_email(email_cfg, subject, html, images, to=to)
 
 
-def send_digest(email_cfg, groups: dict, offers: list, flagged: list, health: dict):
-    send(email_cfg, compose_digest(email_cfg, groups, offers, flagged, health))
+def send_digest(email_cfg, groups: dict, offers: list, flagged: list, health: dict,
+                to: str | None = None):
+    send(email_cfg, compose_digest(email_cfg, groups, offers, flagged, health, to=to))
 
 
 def send_plain(email_cfg, subject: str, body: str):

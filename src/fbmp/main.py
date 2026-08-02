@@ -402,7 +402,7 @@ def send_hot_alert(cfg, store, listing: dict, ev: dict, target_id: str, counters
         store.set_status(lid, "alerted_hot")
         return
     try:
-        notify.send_hot(cfg.email, listing, ev, target_id)
+        notify.send_hot(cfg.email, listing, ev, target_id, to=cfg.target_email(target_id))
         store.set_status(lid, "alerted_hot")
         counters["hot_alerts"] += 1
         log.info("HOT alert sent: %s (%s)", listing.get("title"), lid)
@@ -561,13 +561,34 @@ def cmd_digest(args) -> int:
             store.finish_run(run_id, note="empty")
             return 0
 
+        # One digest email per destination address: targets may override the
+        # global recipient, so bundle sections by where they're going.
+        default_to = cfg.email.to if cfg.email else "default"
+
+        def recipient_for(target_id) -> str:
+            return cfg.target_email(target_id) or default_to
+
+        bundles: dict[str, dict] = {}
+
+        def bundle(to: str) -> dict:
+            return bundles.setdefault(to, {"groups": {}, "offers": [], "flagged": []})
+
+        for tid, items in groups.items():
+            bundle(recipient_for(tid))["groups"][tid] = items
+        for it in offers:
+            bundle(recipient_for(it.get("target_id")))["offers"].append(it)
+        for it in flagged:
+            bundle(recipient_for(it.get("target_id")))["flagged"].append(it)
+
         if args.dry_run:
             preview = cfg.debug_dir / "preview"
             preview.mkdir(parents=True, exist_ok=True)
-            msg = notify.compose_digest(cfg.email, groups, offers, flagged, hstats) if cfg.email else None
-            out = preview / "digest.eml"
-            out.write_bytes(msg.as_bytes() if msg else b"(no email config)")
-            log.info("DRY RUN: digest with %d items rendered to %s", n, out)
+            for to, b in bundles.items():
+                msg = notify.compose_digest(cfg.email, b["groups"], b["offers"],
+                                            b["flagged"], hstats, to=to) if cfg.email else None
+                out = preview / f"digest-{to.replace('@', '_at_').replace('/', '_')}.eml"
+                out.write_bytes(msg.as_bytes() if msg else b"(no email config)")
+                log.info("DRY RUN: digest for %s rendered to %s", to, out)
             store.finish_run(run_id, note="dry_run")
             return 0
 
@@ -576,7 +597,8 @@ def cmd_digest(args) -> int:
         # 'offer', so a digested near-miss may return once as an offer but
         # nothing repeats within its kind. An item whose claim is already taken
         # was sent by an earlier attempt that died before marking the queue —
-        # mark it sent now, keep it out of this email.
+        # mark it sent now, keep it out of this email. Claims and rollback are
+        # per recipient, so one failed send never blocks or duplicates another's.
         def claimed(it, kind):
             if store.try_claim_alert(it["listing_id"], kind):
                 return True
@@ -585,29 +607,37 @@ def cmd_digest(args) -> int:
             store.mark_digest_sent([it["listing_id"]])
             return False
 
-        groups = {tid: kept for tid, items in groups.items()
-                  if (kept := [it for it in items if claimed(it, "digest")])}
-        offers = [it for it in offers if claimed(it, "offer")]
-        flagged = [it for it in flagged if claimed(it, "digest")]
-        digest_ids = [it["listing_id"] for items in groups.values() for it in items]
-        digest_ids += [it["listing_id"] for it in flagged]
-        offer_ids = [it["listing_id"] for it in offers]
-        sent_ids = digest_ids + offer_ids
-        if not sent_ids:
+        sent_total, failures = 0, 0
+        for to, b in bundles.items():
+            bgroups = {tid: kept for tid, items in b["groups"].items()
+                       if (kept := [it for it in items if claimed(it, "digest")])}
+            boffers = [it for it in b["offers"] if claimed(it, "offer")]
+            bflagged = [it for it in b["flagged"] if claimed(it, "digest")]
+            digest_ids = [it["listing_id"] for items in bgroups.values() for it in items]
+            digest_ids += [it["listing_id"] for it in bflagged]
+            offer_ids = [it["listing_id"] for it in boffers]
+            ids = digest_ids + offer_ids
+            if not ids:
+                continue
+            try:
+                notify.send_digest(cfg.email, bgroups, boffers, bflagged, hstats, to=to)
+            except Exception as e:
+                log.error("digest send to %s failed (%s) — will retry tomorrow", to, e)
+                store.release_alerts(digest_ids, "digest")
+                store.release_alerts(offer_ids, "offer")
+                failures += 1
+                continue
+            store.mark_digest_sent(ids)
+            sent_total += len(ids)
+            log.info("digest sent to %s: %d items", to, len(ids))
+
+        if sent_total == 0 and failures == 0:
             log.info("digest: every pending item was already sent")
             store.finish_run(run_id, note="empty")
             return 0
-
-        try:
-            notify.send_digest(cfg.email, groups, offers, flagged, hstats)
-        except Exception:
-            store.release_alerts(digest_ids, "digest")  # roll back so tomorrow retries
-            store.release_alerts(offer_ids, "offer")
-            raise
-        store.mark_digest_sent(sent_ids)
-        log.info("digest sent: %d items", len(sent_ids))
-        store.finish_run(run_id, note=f"sent {len(sent_ids)}")
-        return 0
+        note = f"sent {sent_total}" + (f", {failures} send(s) failed" if failures else "")
+        store.finish_run(run_id, note=note)
+        return 1 if failures else 0
     finally:
         store.close()
         lock.release()
@@ -663,7 +693,8 @@ def cmd_targets_lint(args) -> int:
     print(f"{len(cfg.targets)} target(s), {len(cfg.active_targets())} active\n")
     for t in cfg.targets:
         state = "active" if t.active else "PAUSED"
-        print(f"■ {t.id} [{state}] — wants {t.bargain_level}, max ${t.max_price}")
+        dest = f", alerts → {t.email}" if t.email else ""
+        print(f"■ {t.id} [{state}] — wants {t.bargain_level}, max ${t.max_price}{dest}")
         print(f"  {t.description}")
         if t.notes:
             print(f"  notes: {t.notes}")

@@ -50,7 +50,9 @@ Inspect behavior: `sqlite3 data/fbmp.db "SELECT datetime(started_at,'unixepoch',
 - `config/targets.yaml` — user-owned watch list. Queries must be short
   title-style search strings ("Saragosa 8000"), never descriptive phrases;
   omit `queries:` to have Claude generate them (cached in `kv` until the
-  description changes).
+  description changes). Optional per-target `email:` routes that target's
+  hot alerts + digest sections to a different address (digest becomes one
+  email per distinct recipient; claims/rollback are per recipient).
 - `src/fbmp/prompts.py` — stage-1 triage, stage-2 verdict, query generation.
   Tune here + verify with `eval-replay`; capture new fixtures from dry-run DBs.
 - `src/fbmp/pacing.py` — humanization engine. **Hard rule: no fixed constants

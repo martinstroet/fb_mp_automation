@@ -39,6 +39,7 @@ class Target:
     notes: str = ""
     queries: list[str] = field(default_factory=list)
     active: bool = True
+    email: str = ""  # per-target alert destination; empty = global ALERT_EMAIL
 
 
 @dataclass
@@ -79,6 +80,15 @@ class Config:
     def active_targets(self) -> list[Target]:
         return [t for t in self.targets if t.active]
 
+    def target_email(self, target_id: str | None) -> str | None:
+        """Per-target alert destination override, or None for the global default.
+        Looks at all targets (not just active) so queued items from a paused
+        target still route to its address."""
+        for t in self.targets:
+            if t.id == target_id and t.email:
+                return t.email
+        return None
+
     def get(self, *keys, default=None):
         """settings.yaml lookup: cfg.get('pacing', 'nav_delay_seconds')."""
         node = self.settings
@@ -117,6 +127,9 @@ def load_targets(path: Path | None = None) -> list[Target]:
             raise ConfigError(
                 f"{path}: target '{tid}' bargain_level '{level}' not one of {BARGAIN_LEVELS}"
             )
+        email = (merged.get("email") or "").strip()
+        if email and "@" not in email:
+            raise ConfigError(f"{path}: target '{tid}' email '{email}' is not an address")
         targets.append(
             Target(
                 id=tid,
@@ -126,6 +139,7 @@ def load_targets(path: Path | None = None) -> list[Target]:
                 notes=(merged.get("notes") or "").strip(),
                 queries=list(merged.get("queries") or []),
                 active=bool(merged.get("active", True)),
+                email=email,
             )
         )
     return targets
