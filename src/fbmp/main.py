@@ -281,6 +281,15 @@ def revisit_phase(cfg, store):
             break
 
 
+def is_rejectable(r: dict) -> bool:
+    """Stage-2 reject rule: claude's non-match verdict stands unless the listing
+    is a dubious *match* (worth a flagged-digest warning). A dubious non-match
+    is noise twice over — reject it, don't surface it."""
+    return r.get("verdict") == "reject" and not (
+        bool(r.get("dubious")) and bool(r.get("final_match"))
+    )
+
+
 def enforced_flags(cfg, listing: dict, r: dict) -> tuple[bool, bool]:
     """Code-enforced (hot, offer) decisions for one stage-2 result — claude's
     flags alone are never trusted. Shared by the live pipeline and eval-replay
@@ -367,7 +376,7 @@ def verdict_phase(cfg, store, counters: dict, preview_dir: Path | None = None):
             store.record_evaluation(lid, 2, ev)
             if is_hot:
                 send_hot_alert(cfg, store, l, ev, tid, counters, preview_dir)
-            elif r.get("verdict") == "reject" and not dubious:
+            elif is_rejectable(r):
                 store.set_status(lid, "rejected")
             else:  # digest, incl. dubious-but-matching (flags shown in digest)
                 store.set_status(lid, "queued_digest")
@@ -421,6 +430,9 @@ def cmd_cycle(args) -> int:
                     detail_fetches=0, hot_alerts=0, errors=0)
     try:
         prune_old_files(cfg)
+        abandoned = store.mark_abandoned_runs()
+        if abandoned:
+            log.info("tagged %d abandoned run(s) from earlier power loss/kill", abandoned)
         pacer = Pacer(cfg, store)
         if not manual:
             ok, reason = pacer.gate()
@@ -800,7 +812,7 @@ def cmd_eval_replay(args) -> int:
         is_hot, is_offer = enforced_flags(cfg, l, r)
         if is_hot:
             disp = "HOT alert"
-        elif r.get("verdict") == "reject" and not r.get("dubious"):
+        elif is_rejectable(r):
             disp = "rejected"
         elif r.get("dubious"):
             disp = "digest (flagged dubious)"

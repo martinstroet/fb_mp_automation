@@ -329,6 +329,18 @@ class Store:
         )
         self.db.commit()
 
+    def mark_abandoned_runs(self, older_than_secs: int = 7200) -> int:
+        """Tag never-finished runs (power loss / SIGKILL mid-cycle) so analysis
+        queries can tell them from in-flight ones. Only runs with an empty note
+        qualify — gated wakes already carry their reason. finished_at stays NULL."""
+        cur = self.db.execute(
+            "UPDATE runs SET note='abandoned' "
+            "WHERE finished_at IS NULL AND COALESCE(note,'')='' AND started_at < ?",
+            (int(time.time()) - older_than_secs,),
+        )
+        self.db.commit()
+        return cur.rowcount
+
     def runs_today(self) -> list[sqlite3.Row]:
         lt = time.localtime()
         midnight = int(time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1)))
