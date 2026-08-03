@@ -40,7 +40,7 @@
         Asking <b>{{ it.price_text or "?" }}</b>
         {% if it.est_value_aud %} · est ${{ it.est_value_aud }}{% endif %}
         {% if it.suggested_offer_aud %} · <b style="color:#0a7d32;">try ${{ it.suggested_offer_aud }}</b>{% endif %}<br>
-        <span style="color:#666;">{{ it.location or "" }}{% if it.listed_ago_text %} · {{ it.listed_ago_text }}{% endif %}</span>
+        <span style="color:#666;">{{ it.location or "" }}{% if it.listed_ago_text %} · {{ it.listed_ago_text }}{% endif %}{% if it.routed_to %} · sent to {{ it.routed_to }}{% endif %}</span>
         {% if it.rationale %}<br><span style="color:#444;">{{ it.rationale }}</span>{% endif %}
       </td>
     </tr>
@@ -61,13 +61,25 @@
       <td style="vertical-align:top;font-size:14px;padding:8px;">
         <a href="{{ it.url }}" style="font-weight:600;color:#b00;text-decoration:none;">{{ it.title }}</a><br>
         <b>{{ it.price_text or "?" }}</b>{% if it.est_value_aud %} · est ${{ it.est_value_aud }}{% endif %}<br>
-        <span style="color:#666;">{{ it.location or "" }}</span><br>
+        <span style="color:#666;">{{ it.location or "" }}{% if it.routed_to %} · sent to {{ it.routed_to }}{% endif %}</span><br>
         <span style="color:#b00;">flags: {{ it.dubious_reasons | join(", ") | replace("_"," ") }}</span>
         {% if it.rationale %}<br><span style="color:#444;">{{ it.rationale }}</span>{% endif %}
       </td>
     </tr>
   </table>
   {% endfor %}
+  {% endif %}
+
+  {% if summary %}
+  <h3 style="margin:28px 0 8px;color:#555;border-bottom:1px solid #ddd;padding-bottom:4px;">📈 Last 24h — operations summary</h3>
+  <table style="border-collapse:collapse;font-size:13px;color:#444;">
+    {% for label, value in summary %}
+    <tr>
+      <td style="padding:2px 16px 2px 0;color:#888;white-space:nowrap;vertical-align:top;">{{ label }}</td>
+      <td style="padding:2px 0;">{{ value }}</td>
+    </tr>
+    {% endfor %}
+  </table>
   {% endif %}
 
   <p style="margin-top:28px;padding-top:8px;border-top:1px solid #ddd;color:#888;font-size:12px;">

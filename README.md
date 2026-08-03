@@ -2,10 +2,12 @@
 
 Personal watcher that checks Facebook Marketplace on an irregular ~30-minute
 rhythm for listings matching your `config/targets.yaml` watch list, uses Claude
-(headless `claude -p`, your existing subscription) to fuzzy-match listings,
-estimate market value, rate the bargain, and flag dubious sellers. HOT listings
-email you immediately; everything else lands in a daily digest. Nothing is ever
-reported twice.
+(headless `claude -p`, your existing subscription) to fuzzy-match listings —
+reading the photos, not just the titles — estimate market value, rate the
+bargain, and flag dubious sellers. HOT listings email immediately; everything
+else lands in a daily digest, routable per target to different recipients,
+with a full oversight copy + operations summary to the owner. Nothing is ever
+reported twice in the same capacity (hot / digest / offer).
 
 > **Heads up:** automating your own logged-in FB account is against Facebook's
 > ToS and carries some risk of account restriction. The pacing engine goes to
@@ -32,25 +34,62 @@ fbmp digest         # manually drain the digest queue once
 scripts/install_launchd.sh      # enable the schedule (every 30 min + daily digest)
 ```
 
-## How it decides
+## Methodology
 
-- **Stage 1 (triage)**: every new listing's card info (title/price/location) is
-  batched to Claude with all targets. Non-matches are rejected; decent matches
-  go to the digest; promising bargains are shortlisted.
-- **Stage 2 (verdict)**: shortlisted listings get their detail page fetched
-  (description, seller join year, photo count), then Claude gives a final
-  verdict with scam checks. `hot` requires: matches the target, meets your
-  requested bargain level, nothing dubious, confidence ≥ 0.6 — enforced in
-  code, not just prompt.
-- **Dubious flags** demote a listing to the digest's "⚠ flagged" section:
-  new FB account + cheap item, price too good to be true, suspected stock
-  photos, vague copy-paste description.
-- **"Worth a lower offer"**: ~25% of cycles, one search runs without the
-  freshness filter (and a raised price ceiling) to find *older* listings.
-  A match priced one bargain-step above your ask that's been listed 4–45 days
-  (seller motivated, listing not abandoned; window configurable under
-  `negotiation:` in settings.yaml) lands in its own digest section with a
-  suggested opening offer.
+The core principle: **Claude proposes, code disposes.** Claude's judgments
+(match, value, rating, scam flags) never trigger an email by themselves —
+every disposition passes a code-enforced gate with thresholds from
+`config/settings.yaml`, so a prompt regression can't spam or over-alert.
+
+- **Discovery.** Each cycle runs a few target queries as *fresh sweeps*
+  (last-day listings, newest first) via a round-robin cursor so every query
+  gets coverage across the day. ~25% of cycles convert one slot into a
+  *stale sweep* — no freshness filter, price ceiling ×1.4 — hunting older
+  listings whose sellers may take a lower offer.
+- **Stage 1 — triage.** New listings' card info (title/price/location +
+  thumbnail) is batched to Claude with all targets: fuzzy match, market-value
+  estimate, bargain rating, match confidence. Non-matches and weak matches
+  (confidence < 0.4) are dropped; solid matches queue for the digest;
+  bargains at/near your wanted level are shortlisted for a detail look.
+- **Photo interpretation.** Every evaluation stage passes the listing's
+  downloaded thumbnail; Claude views it and photos override titles for
+  physical attributes (axle count, cage fitted, model variant, condition) and
+  feed the scam checks. A "tandem trailer" showing one wheel per side is
+  single-axle, whatever the seller typed.
+- **Stage 2 — verdict.** Shortlisted listings get one detail-page fetch
+  (description, seller join year, listing age, photo count; ≤5 per cycle,
+  best-margin first), then a final verdict. **hot** = matches ∧ meets your
+  bargain level ∧ nothing dubious ∧ confidence ≥ 0.6 → immediate email.
+- **Scam screening.** Dubious *matches* land in the digest's "⚠ flagged"
+  section, never hot. Signals must corroborate: a great price alone never
+  flags (finding great prices is the tool's purpose) — it takes company like
+  a months-old account, stock photos, or copy-paste text.
+- **Negotiation ("worth a lower offer").** A match priced one bargain step
+  above your ask and listed 4–45 days (configurable) gets a suggested opening
+  offer in its own digest section. Candidates come from stale sweeps and from
+  *revisits*: previously digested near-misses re-enter the pipeline exactly
+  once when they age into the window.
+- **Report-once, per kind.** Email claims are recorded per (listing, kind) —
+  `hot` / `digest` / `offer` — transactionally before SMTP, with rollback on
+  failure. Nothing ever repeats within a kind; a digested near-miss may
+  return once as an offer (or hot) via the revisit path.
+- **Routing & oversight.** A target may set `email:` to route its hot alerts
+  and digest sections to someone else. The owner's daily email always carries
+  the full picture: their own sections, labeled copies of everything routed
+  elsewhere, and a 24-hour operations summary (cycles, match/verdict stats,
+  alerts, pipeline backlog) — sent daily even when nothing matched.
+- **Ad-hoc valuation.** `fbmp value <listing-url>` prints an estimated
+  second-hand value range for any listing — zero FB traffic when the listing
+  is already known; never touches pipeline state.
+
+## Tuning
+
+Prompts live in `src/fbmp/prompts.py`; iterate offline (zero FB traffic) with
+`fbmp eval-replay tests/fixtures/cards_sample.json` (stage 1) or
+`fbmp eval-replay --stage 2 --target <id> tests/fixtures/details_sample.json`
+(stage 2 — also prints the code-enforced disposition each listing would get).
+Fixtures captured from real listings, thumbnails included:
+`cards_trailers.json`, `details_saragosa_hot.json`.
 
 ## Humanization
 

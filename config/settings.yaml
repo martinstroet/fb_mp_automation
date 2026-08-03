@@ -70,6 +70,9 @@ retention:
 
 alerts:
   digest_hour: 18
-  send_empty_digest: false       # if queue empty and day healthy, stay silent
+  daily_summary: true            # owner's digest always includes a 24h ops summary
+                                 # + copies of sections routed to other recipients,
+                                 # and is sent daily even when no listings matched
+  send_empty_digest: false       # (only relevant if daily_summary is off)
   session_alert_min_hours: 24    # rate-limit "please re-login" emails
   zero_result_streak_alert: 3    # all-searches-empty cycles before health email

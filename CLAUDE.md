@@ -2,9 +2,12 @@
 
 Personal FB Marketplace watcher: scrapes on a humanized ~30-min rhythm via the
 user's logged-in session (Playwright + real Chrome), evaluates listings with
-headless `claude -p`, emails HOT bargains immediately and the rest in a daily
-18:00 digest. **This system is LIVE on launchd** — sessions in this repo are
-usually about optimizing settings/prompts/methodology, not rebuilding.
+headless `claude -p` (text + thumbnail photos), emails HOT bargains
+immediately and the rest in a daily 18:00 digest — per-target routable, with
+the owner always receiving the full oversight copy + 24h ops summary.
+**This system is LIVE on launchd** — sessions in this repo are usually about
+optimizing settings/prompts/methodology, not rebuilding. README.md holds the
+user-facing methodology writeup; keep both in sync when behavior changes.
 
 ## Live-system rules (read first)
 
@@ -46,7 +49,9 @@ Inspect behavior: `sqlite3 data/fbmp.db "SELECT datetime(started_at,'unixepoch',
 
 - `config/settings.yaml` — all tunables: pacing distributions/probabilities,
   active hours, per-cycle caps, negotiation window (4–45 days), digest hour,
-  `headless` flag. Picked up next cycle, no reinstall.
+  `alerts.daily_summary` (owner's daily ops summary + routed-section copies,
+  sent even on empty days), `headless` flag. Picked up next cycle, no
+  reinstall.
 - `config/targets.yaml` — user-owned watch list. Queries must be short
   title-style search strings ("Saragosa 8000"), never descriptive phrases;
   omit `queries:` to have Claude generate them (cached in `kv` until the

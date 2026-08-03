@@ -551,15 +551,34 @@ def cmd_digest(args) -> int:
         n = sum(len(v) for v in groups.values()) + len(offers) + len(flagged)
         hstats = health.summary(store)
 
+        # Owner oversight: the default address gets a daily ops summary and a
+        # copy of every routed section, for review/debugging/optimisation.
+        summary = (health.ops_summary(store)
+                   if cfg.get("alerts", "daily_summary", default=True) else None)
+
         if n == 0:
             healthy = hstats["session_ok"] and hstats["errors"] == 0 and hstats["cycles"] > 0
-            if not healthy and cfg.email and not args.dry_run:
+            if args.dry_run:
+                if cfg.email and summary is not None:
+                    preview = cfg.debug_dir / "preview"
+                    preview.mkdir(parents=True, exist_ok=True)
+                    msg = notify.compose_digest(cfg.email, {}, [], [], hstats, summary=summary)
+                    (preview / "digest-summary-only.eml").write_bytes(msg.as_bytes())
+                log.info("DRY RUN: no listings (healthy=%s)", hstats)
+                store.finish_run(run_id, note="dry_run")
+                return 0
+            if summary is not None and cfg.email:
+                notify.send_digest(cfg.email, {}, [], [], hstats, summary=summary)
+                log.info("daily summary sent (no listings)")
+                store.finish_run(run_id, note="summary only")
+                return 0
+            if not healthy and cfg.email:
                 notify.send_plain(
                     cfg.email,
                     "FB MP watcher: no listings today (health warning)",
                     f"No matched listings today, and the day wasn't healthy: {hstats}",
                 )
-            elif cfg.get("alerts", "send_empty_digest", default=False) and cfg.email and not args.dry_run:
+            elif cfg.get("alerts", "send_empty_digest", default=False) and cfg.email:
                 notify.send_plain(cfg.email, "FB Marketplace digest — nothing today", f"Health: {hstats}")
             log.info("digest: nothing to send (healthy=%s)", hstats)
             store.finish_run(run_id, note="empty")
@@ -584,12 +603,30 @@ def cmd_digest(args) -> int:
         for it in flagged:
             bundle(recipient_for(it.get("target_id")))["flagged"].append(it)
 
+        def merge_routed(base: dict, routed: list[tuple]) -> tuple[dict, list, list]:
+            """Owner's oversight view: own sections + labeled copies of what was
+            routed to other recipients."""
+            g = dict(base["groups"])
+            o, f = list(base["offers"]), list(base["flagged"])
+            for to, rg, ro, rf in routed:
+                for tid, items in rg.items():
+                    g[f"{tid} (→ {to})"] = items
+                o += [dict(it, routed_to=to) for it in ro]
+                f += [dict(it, routed_to=to) for it in rf]
+            return g, o, f
+
+        own = bundles.pop(default_to, {"groups": {}, "offers": [], "flagged": []})
+
         if args.dry_run:
             preview = cfg.debug_dir / "preview"
             preview.mkdir(parents=True, exist_ok=True)
-            for to, b in bundles.items():
-                msg = notify.compose_digest(cfg.email, b["groups"], b["offers"],
-                                            b["flagged"], hstats, to=to) if cfg.email else None
+            renders = [(to, b["groups"], b["offers"], b["flagged"], None) for to, b in bundles.items()]
+            g, o, f = merge_routed(own, [(to, b["groups"], b["offers"], b["flagged"])
+                                         for to, b in bundles.items()])
+            renders.append((default_to, g, o, f, summary))
+            for to, g, o, f, summ in renders:
+                msg = notify.compose_digest(cfg.email, g, o, f, hstats,
+                                            to=to, summary=summ) if cfg.email else None
                 out = preview / f"digest-{to.replace('@', '_at_').replace('/', '_')}.eml"
                 out.write_bytes(msg.as_bytes() if msg else b"(no email config)")
                 log.info("DRY RUN: digest for %s rendered to %s", to, out)
@@ -612,7 +649,8 @@ def cmd_digest(args) -> int:
             return False
 
         sent_total, failures = 0, 0
-        for to, b in bundles.items():
+        routed_sent: list[tuple] = []
+        for to, b in bundles.items():  # non-default recipients (default was popped)
             bgroups = {tid: kept for tid, items in b["groups"].items()
                        if (kept := [it for it in items if claimed(it, "digest")])}
             boffers = [it for it in b["offers"] if claimed(it, "offer")]
@@ -633,7 +671,37 @@ def cmd_digest(args) -> int:
                 continue
             store.mark_digest_sent(ids)
             sent_total += len(ids)
+            routed_sent.append((to, bgroups, boffers, bflagged))
             log.info("digest sent to %s: %d items", to, len(ids))
+
+        # Owner email: own claimed sections + copies of routed sections + summary.
+        # Copies aren't claimed — the oversight duplication is deliberate.
+        ogroups = {tid: kept for tid, items in own["groups"].items()
+                   if (kept := [it for it in items if claimed(it, "digest")])}
+        ooffers = [it for it in own["offers"] if claimed(it, "offer")]
+        oflagged = [it for it in own["flagged"] if claimed(it, "digest")]
+        own_digest_ids = [it["listing_id"] for items in ogroups.values() for it in items]
+        own_digest_ids += [it["listing_id"] for it in oflagged]
+        own_offer_ids = [it["listing_id"] for it in ooffers]
+        own_ids = own_digest_ids + own_offer_ids
+        g, o, f = merge_routed({"groups": ogroups, "offers": ooffers, "flagged": oflagged},
+                               routed_sent)
+        if own_ids or routed_sent or summary is not None:
+            try:
+                notify.send_digest(cfg.email, g, o, f, hstats, to=default_to, summary=summary)
+            except Exception as e:
+                log.error("digest send to %s failed (%s) — will retry tomorrow", default_to, e)
+                store.release_alerts(own_digest_ids, "digest")
+                store.release_alerts(own_offer_ids, "offer")
+                failures += 1
+            else:
+                store.mark_digest_sent(own_ids)
+                sent_total += len(own_ids)
+                log.info("digest sent to %s: %d own + %d routed copies%s", default_to,
+                         len(own_ids), sum(len(r[2]) + len(r[3]) +
+                                           sum(len(v) for v in r[1].values())
+                                           for r in routed_sent),
+                         ", with summary" if summary is not None else "")
 
         if sent_total == 0 and failures == 0:
             log.info("digest: every pending item was already sent")

@@ -58,6 +58,48 @@ def mark_session_dead(cfg, store, reason: str):
         log.error("failed to send session alert: %s", e)
 
 
+def ops_summary(store) -> list[tuple[str, str]]:
+    """Last-24h operational stats for the owner's daily oversight email —
+    the review/debugging/optimisation view across all targets."""
+    day = int(time.time()) - 86400
+    db = store.db
+    c = db.execute(
+        """SELECT COUNT(*) n, COALESCE(SUM(searches),0) s, COALESCE(SUM(cards_seen),0) cs,
+                  COALESCE(SUM(new_listings),0) nl, COALESCE(SUM(detail_fetches),0) df,
+                  COALESCE(SUM(errors),0) e
+           FROM runs WHERE kind='cycle' AND started_at>=? AND searches>0""", (day,)).fetchone()
+    skips = db.execute(
+        "SELECT COALESCE(NULLIF(note,''),'?'), COUNT(*) FROM runs "
+        "WHERE kind='cycle' AND started_at>=? AND searches=0 GROUP BY 1", (day,)).fetchall()
+    s1 = db.execute(
+        """SELECT COUNT(*) n, COALESCE(SUM(matched),0) m,
+                  ROUND(AVG(CASE WHEN matched=1 THEN confidence END),2) mc
+           FROM evaluations WHERE stage=1 AND created_at>=?""", (day,)).fetchone()
+    s2 = db.execute(
+        """SELECT COUNT(*) n, COALESCE(SUM(hot),0) h, COALESCE(SUM(negotiation),0) o,
+                  COALESCE(SUM(dubious),0) d
+           FROM evaluations WHERE stage=2 AND created_at>=?""", (day,)).fetchone()
+    sent = db.execute(
+        "SELECT kind, COUNT(*) FROM alerts WHERE sent_at>=? GROUP BY kind", (day,)).fetchall()
+    backlog = db.execute(
+        "SELECT status, COUNT(*) FROM listings WHERE status IN "
+        "('new','shortlisted','detailed') GROUP BY status").fetchall()
+    rows = [
+        ("Cycles ran (24h)", str(c["n"])),
+        ("Wakes skipped", ", ".join(f"{k}×{v}" for k, v in skips) or "none"),
+        ("Searches / cards seen / new", f"{c['s']} / {c['cs']} / {c['nl']}"),
+        ("Detail fetches / errors", f"{c['df']} / {c['e']}"),
+        ("Stage-1 evals (matched)", f"{s1['n']} ({s1['m']} matched"
+         + (f", avg conf {s1['mc']}" if s1["mc"] is not None else "") + ")"),
+        ("Stage-2 verdicts", f"{s2['n']} (hot {s2['h']}, offer {s2['o']}, dubious {s2['d']})"),
+        ("Alerts sent", ", ".join(f"{k}×{v}" for k, v in sent) or "none"),
+        ("Pipeline backlog", ", ".join(f"{k}×{v}" for k, v in backlog) or "empty"),
+        ("Zero-result streak", str(store.kv_get("zero_streak", 0))),
+        ("Session", "OK" if store.kv_get("session_ok", True) else "NEEDS RE-LOGIN"),
+    ]
+    return rows
+
+
 def summary(store) -> dict:
     runs = [r for r in store.runs_today() if r["kind"] == "cycle"]
     return {

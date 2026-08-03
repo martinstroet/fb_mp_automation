@@ -68,7 +68,9 @@ def send_hot(email_cfg, listing: dict, ev: dict, target_id: str, to: str | None 
 
 
 def compose_digest(email_cfg, groups: dict[str, list[dict]], offers: list[dict],
-                   flagged: list[dict], health: dict, to: str | None = None) -> EmailMessage:
+                   flagged: list[dict], health: dict, to: str | None = None,
+                   summary: list[tuple[str, str]] | None = None) -> EmailMessage:
+    """`summary`: (label, value) rows for the owner's daily oversight block."""
     images: dict[str, str] = {}
     for items in list(groups.values()) + [offers, flagged]:
         for it in items:
@@ -77,20 +79,25 @@ def compose_digest(email_cfg, groups: dict[str, list[dict]], offers: list[dict],
             if cid:
                 images[cid] = it["thumb_path"]
     n = sum(len(v) for v in groups.values()) + len(offers) + len(flagged)
-    subject = f"FB Marketplace digest — {n} listing{'s' if n != 1 else ''}"
+    if n:
+        subject = f"FB Marketplace digest — {n} listing{'s' if n != 1 else ''}"
+    else:
+        subject = "FB Marketplace daily summary — no new listings"
     html = _env.get_template("digest.html.j2").render(
         date=dt.date.today().strftime("%a %d %b %Y"),
         groups=groups,
         offers=offers,
         flagged=flagged,
         health=health,
+        summary=summary,
     )
     return build_html_email(email_cfg, subject, html, images, to=to)
 
 
 def send_digest(email_cfg, groups: dict, offers: list, flagged: list, health: dict,
-                to: str | None = None):
-    send(email_cfg, compose_digest(email_cfg, groups, offers, flagged, health, to=to))
+                to: str | None = None, summary: list[tuple[str, str]] | None = None):
+    send(email_cfg, compose_digest(email_cfg, groups, offers, flagged, health,
+                                   to=to, summary=summary))
 
 
 def send_plain(email_cfg, subject: str, body: str):
