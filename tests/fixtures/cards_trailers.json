@@ -1,0 +1,52 @@
+[
+  {
+    "listing_id": "1977937819442242",
+    "title": "Red 7x4 Cage Trailer \u2013 6 Months Rego \u2013 $1000 Cash \u2013 Pick Up Margate",
+    "price_text": "AU$1,000",
+    "price_aud": 1000,
+    "location": "Brisbane, QLD",
+    "source_query": "dual axle cage trailer",
+    "thumb_path": "/Users/uqmstroe/fb_mp_automation/data/thumbs/1977937819442242.jpg",
+    "sweep": "fresh"
+  },
+  {
+    "listing_id": "4093458010955362",
+    "title": "Cage trailer 6x4 registered",
+    "price_text": "AU$1,250",
+    "price_aud": 1250,
+    "location": "Brisbane, QLD",
+    "source_query": "tandem cage trailer",
+    "thumb_path": "/Users/uqmstroe/fb_mp_automation/data/thumbs/4093458010955362.jpg",
+    "sweep": "fresh"
+  },
+  {
+    "listing_id": "2226457374777776",
+    "title": "7 x 5 Box Trailer with cage",
+    "price_text": "AU$850",
+    "price_aud": 850,
+    "location": "Brisbane, QLD",
+    "source_query": "tandem cage trailer",
+    "thumb_path": "/Users/uqmstroe/fb_mp_automation/data/thumbs/2226457374777776.jpg",
+    "sweep": "stale"
+  },
+  {
+    "listing_id": "1656355498766171",
+    "title": "Box trailer",
+    "price_text": "AU$2,000",
+    "price_aud": 2000,
+    "location": "Gold Coast, QLD",
+    "source_query": "dual axle cage trailer",
+    "thumb_path": "/Users/uqmstroe/fb_mp_automation/data/thumbs/1656355498766171.jpg",
+    "sweep": "fresh"
+  },
+  {
+    "listing_id": "852125377511575",
+    "title": "2026 Value Trailers 8x5 tilt box trailers, free 900mm mesh cage + free 14' spare wheel, ready to go today!",
+    "price_text": "AU$2,129",
+    "price_aud": 2129,
+    "location": "Brisbane, QLD",
+    "source_query": "tandem cage trailer",
+    "thumb_path": "/Users/uqmstroe/fb_mp_automation/data/thumbs/852125377511575.jpg",
+    "sweep": "stale"
+  }
+]

@@ -44,8 +44,9 @@ pacing:
   decoy_probability: 0.10          # open one random listing for no reason
 
 evaluation:
-  claude_timeout_seconds: 180
+  claude_timeout_seconds: 300    # headroom for the photo-interpretation layer
   hot_min_confidence: 0.6
+  digest_min_confidence: 0.4     # stage-1 matches below this are dropped, not digested
   # model: claude-sonnet-5      # optional pin for the claude -p calls; unset = CLI default
 
 # "Worth an offer" candidates: listings priced above the target's bargain level

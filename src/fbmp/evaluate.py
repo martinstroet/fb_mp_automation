@@ -31,7 +31,9 @@ def _extract_json(text: str) -> dict:
 
 def run_claude(prompt: str, timeout: int = 180, model: str | None = None) -> dict:
     """One headless claude call; returns the parsed JSON object it produced."""
-    cmd = ["claude", "-p", "--output-format", "json"]
+    # Read is allowlisted so prompts can reference local thumbnail files and
+    # have claude view them (the photo-interpretation layer)
+    cmd = ["claude", "-p", "--output-format", "json", "--allowedTools", "Read"]
     if model:
         cmd += ["--model", model]
     proc = subprocess.run(

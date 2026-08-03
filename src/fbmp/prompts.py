@@ -4,6 +4,13 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from pathlib import Path
+
+
+def _thumb(l: dict) -> str | None:
+    """Absolute path to the listing's local thumbnail, if it exists on disk."""
+    p = l.get("thumb_path")
+    return p if p and Path(p).exists() else None
 
 
 def _targets_block(targets) -> str:
@@ -42,6 +49,7 @@ def stage1_triage(targets, listings: list[dict], stale_price_factor: float = 1.4
                 "older (found by an unfiltered sweep — likely listed days-to-weeks ago)"
                 if l.get("sweep") == "stale" else "posted within the last day"
             ),
+            "thumbnail_file": _thumb(l),
         }
         for l in listings
     ]
@@ -71,6 +79,13 @@ filter: a listing marked "older" can still match with an ask up to ~"""
         + """% above it — the plan is to negotiate down. Rate bargain_rating
 purely on asking price vs market value, independent of the budget.
 
+Where a listing has a "thumbnail_file", it is a local photo of the item. Use
+the Read tool to view it whenever a physical attribute the target cares about
+(axle or wheel count, cage fitted, item type/size/condition) is not settled by
+the text — titles are unreliable and photos are authoritative. e.g. a trailer
+showing one wheel per side is single-axle no matter what the title says. Let
+what you see raise or sink match_confidence accordingly.
+
 Respond with ONLY a single JSON object, no prose, no markdown fences:
 {"results": [{"listing_id": "...", "matched_target_id": "..." or null,
 "match_confidence": 0.0-1.0, "estimated_market_value_aud": integer or null,
@@ -94,6 +109,7 @@ def stage2_verdict(target, listings: list[dict], current_year: int | None = None
             "seller_joined_facebook_year": l.get("seller_joined_year"),
             "photo_count_approx": l.get("image_count"),
             "listed": l.get("listed_ago_text"),
+            "thumbnail_file": _thumb(l),
         }
         for l in listings
     ]
@@ -104,14 +120,29 @@ def stage2_verdict(target, listings: list[dict], current_year: int | None = None
         + "\n\n## Shortlisted listings (full detail)\n" + json.dumps(items, indent=2)
         + f"""
 
-Give a final verdict on each listing.
+Give a final verdict on each listing. Where a listing has a "thumbnail_file",
+view it with the Read tool BEFORE deciding — photos are primary evidence for
+physical attributes (axle/wheel count, cage, size, variant, condition) and for
+the scam checks below; what you see overrides what the title claims.
 
 Scam/dubiousness checks — set "dubious": true and list every reason that applies:
-- "new_account_cheap_item": seller joined Facebook in {current_year} or {current_year - 1} AND the item is priced well below market
-- "price_too_good": asking price implausibly low vs your market value estimate (classic bait)
-- "stock_photos_suspected": single pristine catalog-style photo, or photos that don't look like a private seller's (note: photo_count_approx overcounts — treat only very low values (0-1) as a signal, never high ones as reassurance)
+- "new_account_cheap_item": the seller's account is only a few months old
+  (joined_facebook_year {current_year} — an earlier join is an established
+  account, not a scam signal) AND the item is priced well below market
+- "price_too_good": asking ≲50% of your market value estimate AND at least one
+  other suspicion signal (brand-new account, stock photos, vague copy-paste
+  text, urgency pressure, off-platform contact). Finding genuinely cheap
+  listings from legitimate sellers is this system's entire purpose — a great
+  price from an established account with specific, personal details is a
+  bargain to alert on, never dubious on price alone.
+- "stock_photos_suspected": single pristine catalog-style photo, or the
+  thumbnail looks like a retailer image rather than a private seller's (note:
+  photo_count_approx overcounts — treat only very low values (0-1) as a
+  signal, never high ones as reassurance)
 - "vague_description": no condition/pickup details, generic copy-paste text
 - "other": anything else that smells off (explain in rationale)
+A listing is dubious when signals corroborate each other, not on one soft
+signal from an otherwise-legitimate listing.
 
 verdict rules:
 - "hot": truly matches the target, price meets the wanted_bargain_level, nothing dubious.
@@ -148,11 +179,15 @@ def market_value(listing: dict) -> str:
         "description": (listing.get("description") or "")[:2500] or None,
         "listed": listing.get("listed_ago_text"),
         "photo_count_approx": listing.get("image_count"),
+        "thumbnail_file": _thumb(listing),
     }
     return (
         FRAMING.format(date=dt.date.today().isoformat())
         + "\n## Listing\n" + json.dumps(item, indent=2)
         + """
+
+If "thumbnail_file" is present, view it with the Read tool first — the photo
+often pins down model/variant and condition better than the text.
 
 Identify the product (brand, model, variant where determinable) and estimate
 what it would realistically sell for second-hand on the Australian private

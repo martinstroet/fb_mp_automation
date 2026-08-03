@@ -238,9 +238,13 @@ def triage_phase(cfg, store, counters: dict):
             # detail fetch is capped per cycle; the fetch queue is drained
             # best-stage-1-margin-first (store.shortlisted_for_detail)
             store.set_status(lid, "shortlisted")
-        else:
+        elif conf >= cfg.get("evaluation", "digest_min_confidence", default=0.4):
             store.set_status(lid, "queued_digest")
             store.queue_digest(lid, tid)
+        else:
+            # matched, but too weakly to be worth the user's attention — broad
+            # categories (e.g. trailers) soft-match half the search results
+            store.set_status(lid, "rejected")
 
 
 def revisit_phase(cfg, store):

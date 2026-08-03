@@ -53,8 +53,14 @@ Inspect behavior: `sqlite3 data/fbmp.db "SELECT datetime(started_at,'unixepoch',
   description changes). Optional per-target `email:` routes that target's
   hot alerts + digest sections to a different address (digest becomes one
   email per distinct recipient; claims/rollback are per recipient).
-- `src/fbmp/prompts.py` — stage-1 triage, stage-2 verdict, query generation.
-  Tune here + verify with `eval-replay`; capture new fixtures from dry-run DBs.
+- `src/fbmp/prompts.py` — stage-1 triage, stage-2 verdict, query generation,
+  market value. All evaluation stages include a **photo layer**: listing
+  thumbnails (`data/thumbs/`) are passed as `thumbnail_file` paths and claude
+  views them via Read (`--allowedTools Read`); photos are authoritative over
+  titles for physical attributes (axle counts, cage, variant) and feed the
+  scam checks. Tune here + verify with `eval-replay`; capture new fixtures
+  from dry-run DBs (real fixtures with live thumbs: `cards_trailers.json`,
+  `details_saragosa_hot.json`).
 - `src/fbmp/pacing.py` — humanization engine. **Hard rule: no fixed constants
   in the FB interaction path** — every delay/count/probability is a draw from
   a settings range. The launchd 1800s tick is only a wake-up; `Pacer.gate()`
@@ -73,6 +79,7 @@ Code enforcement in `main.py` (Claude's flags alone are never trusted):
 - **hot** = verdict `hot` ∧ final_match ∧ meets_target_level ∧ ¬dubious ∧ confidence ≥ 0.6
 - **shortlist** = rating meets target level ∨ (unknown ∧ conf ≥ 0.55) ∨ near-miss (stale sweep, one rating step below ask)
 - **offer** = verdict `offer` ∧ final_match ∧ ¬dubious ∧ listed 4–45 days (parsed from "Listed X ago"; unknown age tolerated only for stale-sweep finds)
+- **digest** (stage 1) = matched ∧ match_confidence ≥ 0.4 (`digest_min_confidence`); weaker matches are dropped, not digested — broad categories soft-match half their search results
 - Crash-resume: `status` column is the state machine; stuck listings are picked up next cycle. Claude call failures defer, never drop.
 
 Discovery: fresh sweeps (`daysSinceListed=1`, newest first) via round-robin
