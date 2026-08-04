@@ -29,7 +29,7 @@ cat <<'EOF'
 
 Next steps:
   1. Edit .env (Gmail app password: Google Account -> Security -> App passwords)
-  2. Edit config/targets.yaml and config/settings.yaml (set location_slug!)
+  2. cp config/targets.example.yaml config/targets.yaml, edit it + settings.yaml (set location_slug!)
   3. PYTHONPATH=src .venv/bin/python -m fbmp.main login
   4. PYTHONPATH=src .venv/bin/python -m fbmp.main targets-lint
   5. PYTHONPATH=src .venv/bin/python -m fbmp.main cycle --dry-run

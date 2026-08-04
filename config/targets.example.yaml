@@ -1,0 +1,31 @@
+# Template — copy to targets.yaml (gitignored; your real watch list stays local):
+#   cp config/targets.example.yaml config/targets.yaml
+#
+# Per-target fields:
+#   id            unique slug (used in emails and the DB)
+#   description   free text — this is what Claude matches listings against, be specific
+#   notes         optional extra guidance for Claude (brands, dealbreakers)
+#   queries       optional list of Marketplace search strings; omit to let Claude
+#                 generate them (cached until the description changes)
+#   bargain_level well_below_market | below_market | market
+#   max_price     AUD; also passed to FB as the maxPrice filter
+#   active        set false to pause a target without deleting it
+#   email         optional destination for this target's alerts (hot + digest
+#                 sections); omit to use the global ALERT_EMAIL from .env
+
+defaults:
+  bargain_level: below_market
+  active: true
+
+targets:
+  - id: example-espresso-machine
+    description: >
+      Dual-boiler or heat-exchanger espresso machine (e.g. Rancilio Silvia
+      Pro, Lelit MaraX, Profitec) in working order, for home use.
+    notes: "No pod machines. Descaled/serviced preferred; check group head wear in photos."
+    queries:
+      - "espresso machine"
+      - "rancilio silvia"
+    bargain_level: below_market
+    max_price: 800
+    # email: someone-else@example.com   # route this target's alerts elsewhere

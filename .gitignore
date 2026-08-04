@@ -1,6 +1,7 @@
 .env
 .venv/
 data/
+config/targets.yaml
 __pycache__/
 *.pyc
 .DS_Store

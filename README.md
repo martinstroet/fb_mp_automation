@@ -19,7 +19,8 @@ reported twice in the same capacity (hot / digest / offer).
 scripts/setup.sh                 # venv, deps, checks Chrome + claude CLI
 vim .env                         # Gmail app password (Google Account → Security → App passwords)
 vim config/settings.yaml         # set marketplace.location_slug to your city
-vim config/targets.yaml          # your watch list
+cp config/targets.example.yaml config/targets.yaml   # then edit — your watch
+                                 # list stays local (gitignored, like .env)
 ```
 
 Then, with `alias fbmp='PYTHONPATH=src .venv/bin/python -m fbmp.main'`:
