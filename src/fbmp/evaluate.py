@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import subprocess
 
@@ -18,6 +19,20 @@ FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 
 class ClaudeError(Exception):
     pass
+
+
+def _claude_env() -> dict | None:
+    """Auth for headless runs: launchd cycles can't refresh the interactive
+    OAuth token in the keychain, so a long-lived token from `claude setup-token`
+    lives in data/claude_token (gitignored, chmod 600)."""
+    token_file = DATA_DIR / "claude_token"
+    try:
+        token = token_file.read_text().strip()
+    except OSError:
+        return None
+    if not token:
+        return None
+    return {**os.environ, "CLAUDE_CODE_OAUTH_TOKEN": token}
 
 
 def _extract_json(text: str) -> dict:
@@ -43,9 +58,12 @@ def run_claude(prompt: str, timeout: int = 180, model: str | None = None) -> dic
         text=True,
         timeout=timeout,
         cwd=str(DATA_DIR),  # neutral cwd: never load this repo's CLAUDE.md as context
+        env=_claude_env(),
     )
     if proc.returncode != 0:
-        raise ClaudeError(f"claude exited {proc.returncode}: {proc.stderr[:400]}")
+        # claude -p reports most errors (incl. "Not logged in") on stdout
+        detail = (proc.stderr.strip() or proc.stdout.strip())[:400]
+        raise ClaudeError(f"claude exited {proc.returncode}: {detail}")
     try:
         envelope = json.loads(proc.stdout)
         answer = envelope.get("result", proc.stdout) if isinstance(envelope, dict) else proc.stdout

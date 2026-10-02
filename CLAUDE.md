@@ -22,6 +22,13 @@ user-facing methodology writeup; keep both in sync when behavior changes.
   `Store._migrate()` (ALTER TABLE pattern) — the live DB must migrate in place.
 - The FB session lives in `data/browser_profile/`. Don't wipe it; re-login is
   `python -m fbmp.main login` (interactive, user-driven).
+- Headless claude auth: `data/claude_token` (gitignored, chmod 600) holds a
+  long-lived `claude setup-token` token that `run_claude` injects as
+  `CLAUDE_CODE_OAUTH_TOKEN`. Without it, launchd cycles fail with "Not logged
+  in" whenever the interactive keychain token goes stale (broke every cycle
+  2026-08-09→08-13). If triage errors return, check the headless transcripts in
+  `~/.claude/projects/-Users-uqmstroe-fb-mp-automation-data/` — the token may
+  have expired (1-year life) and needs regenerating via `claude setup-token`.
 - The alert guarantee: `alerts` table `UNIQUE(listing_id, kind)`, claimed
   transactionally before SMTP send (kinds: `hot`, `digest`, `offer`). Don't
   weaken this — "never report twice **per kind**" is a core requirement. A
@@ -56,14 +63,21 @@ Inspect behavior: `sqlite3 data/fbmp.db "SELECT datetime(started_at,'unixepoch',
   title-style search strings ("Saragosa 8000"), never descriptive phrases;
   omit `queries:` to have Claude generate them (cached in `kv` until the
   description changes). Optional per-target `email:` routes that target's
-  hot alerts + digest sections to a different address (digest becomes one
-  email per distinct recipient; claims/rollback are per recipient).
+  **hot alerts only** to a different address; its digest/offer sections stay
+  in the owner's digest (`alerts.external_digest: false`, the default since
+  2026-10-02). Setting it true also routes digest sections (digest becomes
+  one email per distinct recipient; claims/rollback are per recipient).
 - `src/fbmp/prompts.py` — stage-1 triage, stage-2 verdict, query generation,
   market value. All evaluation stages include a **photo layer**: listing
   thumbnails (`data/thumbs/`) are passed as `thumbnail_file` paths and claude
   views them via Read (`--allowedTools Read`); photos are authoritative over
   titles for physical attributes (axle counts, cage, variant) and feed the
-  scam checks. Tune here + verify with `eval-replay`; capture new fixtures
+  scam checks. Detail fetches also save up to `limits.max_detail_images`
+  gallery photos (`data/thumbs/<id>-<n>.jpg`, `listings.image_paths` JSON);
+  stage 2 / `value` pass them as `more_photo_files` and claude Reads further
+  photos only while the thumbnail leaves something decision-relevant
+  unsettled (gallery scrape may catch a recommendation-rail stray — the
+  prompt tells claude to ignore photos of a different item). Tune here + verify with `eval-replay`; capture new fixtures
   from dry-run DBs (real fixtures with live thumbs: `cards_trailers.json`,
   `details_saragosa_hot.json`).
 - `src/fbmp/pacing.py` — humanization engine. **Hard rule: no fixed constants
@@ -95,7 +109,15 @@ sweep** (no age filter, maxPrice ×1.4) to find negotiation candidates.
 their `first_seen_at` ages into the negotiation window (at most once per
 listing, `revisited_at`); stage 2 then re-checks the authoritative listing
 age and may verdict `offer` (re-reported via `requeue_digest` + the `offer`
-alert kind) or even `hot`.
+alert kind) or even `hot`. Eligibility mirrors the stage-1 shortlist rule —
+an `unknown` rating qualifies on confidence (≥0.55), since a card the triage
+couldn't value is exactly what stage 2 is for. `revisit_candidates` is a
+capped oldest-first scan, so **every row it returns must be disposed of** —
+promoted, or stamped `revisited_at` via `retire_revisit` when it is
+permanently ineligible (target dropped from the watch list, rating too far
+below the ask, price above the ceiling — all frozen for the row's life).
+Skipping a row without retiring it wedges the queue head and silently kills
+the whole phase; that regression ran from 2026-08-07 to 09-13.
 
 ## Hard-won scraping facts (don't rediscover these)
 

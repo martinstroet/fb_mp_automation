@@ -13,6 +13,21 @@ def _thumb(l: dict) -> str | None:
     return p if p and Path(p).exists() else None
 
 
+def _extra_photos(l: dict) -> list[str] | None:
+    """Saved gallery photos beyond the thumbnail: DB rows carry them as a JSON
+    string, fixtures/detail dicts as a list. Only files still on disk count."""
+    raw = l.get("image_paths")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            raw = None
+    if not isinstance(raw, list):
+        return None
+    out = [p for p in raw if isinstance(p, str) and Path(p).exists()]
+    return out or None
+
+
 def _targets_block(targets) -> str:
     rows = []
     for t in targets:
@@ -110,6 +125,7 @@ def stage2_verdict(target, listings: list[dict], current_year: int | None = None
             "photo_count_approx": l.get("image_count"),
             "listed": l.get("listed_ago_text"),
             "thumbnail_file": _thumb(l),
+            "more_photo_files": _extra_photos(l),
         }
         for l in listings
     ]
@@ -124,6 +140,16 @@ Give a final verdict on each listing. Where a listing has a "thumbnail_file",
 view it with the Read tool BEFORE deciding — photos are primary evidence for
 physical attributes (axle/wheel count, cage, size, variant, condition) and for
 the scam checks below; what you see overrides what the title claims.
+
+"more_photo_files" lists the rest of the listing's photo gallery at higher
+resolution. Whenever the thumbnail leaves anything decision-relevant
+unsettled — a physical attribute the target cares about, the item's exact
+identity/variant, its condition, or one of the scam checks — keep Reading
+additional photos until it is settled or the photos run out. Stop as soon as
+you have a conclusive view: an already-clear listing needs no extra photos.
+Rarely, a trailing gallery photo is actually an unrelated listing picked up
+from FB's recommendation rail — ignore any photo that plainly shows a
+different item, and never let one change the verdict.
 
 Scam/dubiousness checks — set "dubious": true and list every reason that applies:
 - "new_account_cheap_item": the seller's account is only a few months old
@@ -180,6 +206,7 @@ def market_value(listing: dict) -> str:
         "listed": listing.get("listed_ago_text"),
         "photo_count_approx": listing.get("image_count"),
         "thumbnail_file": _thumb(listing),
+        "more_photo_files": _extra_photos(listing),
     }
     return (
         FRAMING.format(date=dt.date.today().isoformat())
@@ -187,7 +214,10 @@ def market_value(listing: dict) -> str:
         + """
 
 If "thumbnail_file" is present, view it with the Read tool first — the photo
-often pins down model/variant and condition better than the text.
+often pins down model/variant and condition better than the text. If it leaves
+the model/variant or condition uncertain, keep Reading from "more_photo_files"
+(the rest of the gallery, higher resolution) until settled; stop as soon as
+the photos are conclusive.
 
 Identify the product (brand, model, variant where determinable) and estimate
 what it would realistically sell for second-hand on the Australian private

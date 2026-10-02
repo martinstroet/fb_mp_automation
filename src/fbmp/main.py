@@ -118,9 +118,18 @@ def scrape_phase(cfg, store, pacer, searches: list[tuple], counters: dict) -> li
             stale = i == stale_slot
             url = scraper.build_search_url(cfg, query, target.max_price, stale=stale)
             log.info("search [%s]%s %r", target.id, " (stale sweep)" if stale else "", query)
-            goto(page, url, pacer)
-            human_scroll(page, pacer.scroll_flicks())
-            cards = scraper.scrape_search_cards(page)
+            try:
+                goto(page, url, pacer)
+                human_scroll(page, pacer.scroll_flicks())
+                cards = scraper.scrape_search_cards(page)
+            except (SessionExpired, Checkpoint):
+                raise
+            except Exception as e:
+                # a flaky nav must not kill the cycle; the round-robin cursor
+                # brings this query back around next time
+                log.warning("search [%s] failed (%s) — skipping slot", target.id, e)
+                counters["errors"] += 1
+                continue
             counters["searches"] += 1
             counters["cards_seen"] += len(cards)
             if cards:
@@ -160,12 +169,35 @@ def scrape_phase(cfg, store, pacer, searches: list[tuple], counters: dict) -> li
         for row in shortlisted:
             pacer.sleep(pacer.nav_delay())
             log.info("detail fetch %s (%s)", row["listing_id"], row["title"])
-            goto(page, row["url"], pacer)
-            pacer.sleep(pacer.dwell())
-            detail = scraper.scrape_detail(page)
+            try:
+                goto(page, row["url"], pacer)
+                pacer.sleep(pacer.dwell())
+                detail = scraper.scrape_detail(page)
+            except (SessionExpired, Checkpoint):
+                raise
+            except Exception as e:
+                # stays 'shortlisted'; the crash-resume sweep retries next cycle
+                log.warning("detail fetch %s failed (%s) — will retry next cycle",
+                            row["listing_id"], e)
+                counters["errors"] += 1
+                continue
             if not detail.get("title") and not detail.get("description"):
                 scraper.dump_debug(cfg, page, f"detail-{row['listing_id']}")
                 counters["errors"] += 1
+            # gallery photos beyond the card thumbnail, for stage-2 to consult
+            # when the thumbnail is inconclusive (CDN URLs expire — save now)
+            img_cap = cfg.get("limits", "max_detail_images", default=4)
+            if img_cap:
+                extra = []
+                for i, u in enumerate(
+                    scraper.scrape_detail_image_urls(page, limit=img_cap), 1
+                ):
+                    p = scraper.download_thumb(
+                        u, cfg.thumbs_dir / f"{row['listing_id']}-{i}.jpg"
+                    )
+                    if p:
+                        extra.append(p)
+                detail["image_paths"] = extra
             store.save_detail(row["listing_id"], detail)
             store.set_status(row["listing_id"], "detailed")
             counters["detail_fetches"] += 1
@@ -268,14 +300,17 @@ def revisit_phase(cfg, store):
         neg.get("min_days_listed", 4), neg.get("max_days_listed", 45)
     )
     for row in candidates:
-        target = targets.get(row["eval_target_id"])
-        if target is None:
-            continue
-        # wanted level, or one rating step below it (the negotiation near-miss)
-        gap = RATING_ORDER[target.bargain_level] - RATING_ORDER.get(row["eval_rating"], -99)
-        if gap > 1:
-            continue
-        if target.max_price and (row["price_aud"] or 0) > target.max_price * factor:
+        reason = revisit_reject_reason(targets, factor, row)
+        if reason:
+            # Every disqualifier here is frozen for the life of the row: the
+            # target is gone from the watch list, or the stage-1 rating and
+            # confidence are the listing's final ones, or the price is stuck
+            # (upsert_card never rewrites price_aud). So the row can never pass
+            # on a later cycle — retire it rather than skipping it, or it sits
+            # at the head of this oldest-first scan forever and starves every
+            # younger candidate behind it.
+            store.retire_revisit(row["listing_id"])
+            log.debug("revisit: retired %s (%s)", row["listing_id"], reason)
             continue
         store.mark_revisited(row["listing_id"])
         log.info("revisit: %s (%s) aged into negotiation window",
@@ -283,6 +318,28 @@ def revisit_phase(cfg, store):
         promoted += 1
         if promoted >= n:
             break
+
+
+def revisit_reject_reason(targets: dict, factor: float, row) -> str | None:
+    """Why this aged listing can't be a negotiation revisit, or None if it can.
+    Mirrors the stage-1 shortlist rule: an 'unknown' rating is a card the triage
+    couldn't value, not a bad listing — it qualifies on confidence, which is the
+    whole point of sending it to stage 2 for an authoritative verdict."""
+    target = targets.get(row["eval_target_id"])
+    if target is None:
+        return "target no longer on the watch list"
+    rating = row["eval_rating"] or "unknown"
+    if rating == "unknown":
+        if float(row["eval_confidence"] or 0) < 0.55:
+            return "unknown rating below confidence floor"
+    else:
+        # wanted level, or one rating step below it (the negotiation near-miss)
+        gap = RATING_ORDER[target.bargain_level] - RATING_ORDER.get(rating, -99)
+        if gap > 1:
+            return f"rating {rating} too far below {target.bargain_level}"
+    if target.max_price and (row["price_aud"] or 0) > target.max_price * factor:
+        return "price above the negotiation ceiling"
+    return None
 
 
 def is_rejectable(r: dict) -> bool:
@@ -470,7 +527,16 @@ def cmd_cycle(args) -> int:
                 log.error("--query needs at least one active target")
                 store.finish_run(run_id, note="no_active_targets")
                 return 2
-            searches = [(targets[0], args.query)]
+            if getattr(args, "target", None):
+                by_id = {t.id: t for t in targets}
+                if args.target not in by_id:
+                    log.error("--target %r not an active target (have: %s)",
+                              args.target, ", ".join(by_id))
+                    store.finish_run(run_id, note="bad_target")
+                    return 2
+                searches = [(by_id[args.target], args.query)]
+            else:
+                searches = [(targets[0], args.query)]
         else:
             plan = build_query_plan(cfg, store)
             searches = pick_searches(store, plan, pacer.searches_this_cycle())
@@ -568,27 +634,42 @@ def cmd_digest(args) -> int:
                 store.finish_run(run_id, note="dry_run")
                 return 0
             if summary is not None and cfg.email:
-                notify.send_digest(cfg.email, {}, [], [], hstats, summary=summary)
+                try:
+                    notify.send_digest(cfg.email, {}, [], [], hstats, summary=summary)
+                except Exception as e:
+                    # transient SMTP failure must not kill the run (the 18:00
+                    # tick won't come back today; tomorrow's summary covers it)
+                    log.error("daily summary send failed (%s) — will retry tomorrow", e)
+                    store.finish_run(run_id, note="summary_send_failed")
+                    return 1
                 log.info("daily summary sent (no listings)")
                 store.finish_run(run_id, note="summary only")
                 return 0
-            if not healthy and cfg.email:
-                notify.send_plain(
-                    cfg.email,
-                    "FB MP watcher: no listings today (health warning)",
-                    f"No matched listings today, and the day wasn't healthy: {hstats}",
-                )
-            elif cfg.get("alerts", "send_empty_digest", default=False) and cfg.email:
-                notify.send_plain(cfg.email, "FB Marketplace digest — nothing today", f"Health: {hstats}")
+            try:
+                if not healthy and cfg.email:
+                    notify.send_plain(
+                        cfg.email,
+                        "FB MP watcher: no listings today (health warning)",
+                        f"No matched listings today, and the day wasn't healthy: {hstats}",
+                    )
+                elif cfg.get("alerts", "send_empty_digest", default=False) and cfg.email:
+                    notify.send_plain(cfg.email, "FB Marketplace digest — nothing today", f"Health: {hstats}")
+            except Exception as e:
+                log.error("empty-digest notice send failed (%s)", e)
             log.info("digest: nothing to send (healthy=%s)", hstats)
             store.finish_run(run_id, note="empty")
             return 0
 
         # One digest email per destination address: targets may override the
-        # global recipient, so bundle sections by where they're going.
+        # global recipient, so bundle sections by where they're going. With
+        # alerts.external_digest off (the default), a target's email: gets its
+        # hot alerts only — every digest section stays with the owner.
         default_to = cfg.email.to if cfg.email else "default"
+        external_digest = cfg.get("alerts", "external_digest", default=False)
 
         def recipient_for(target_id) -> str:
+            if not external_digest:
+                return default_to
             return cfg.target_email(target_id) or default_to
 
         bundles: dict[str, dict] = {}
@@ -825,6 +906,14 @@ def cmd_value(args) -> int:
                     goto(page, url, pacer)
                     pacer.sleep(pacer.dwell())
                     detail = scraper.scrape_detail(page)
+                    img_cap = cfg.get("limits", "max_detail_images", default=4)
+                    if img_cap:
+                        detail["image_paths"] = [
+                            p for i, u in enumerate(
+                                scraper.scrape_detail_image_urls(page, limit=img_cap), 1)
+                            if (p := scraper.download_thumb(
+                                u, cfg.thumbs_dir / f"{lid}-{i}.jpg"))
+                        ] or None
             except Checkpoint as e:
                 health.mark_session_dead(cfg, store, f"security checkpoint at {e}")
                 print("hit a Facebook checkpoint — watcher stood down", file=sys.stderr)
@@ -891,7 +980,8 @@ def cmd_eval_replay(args) -> int:
         return 0
 
     # stage 2: verdict replay for one target (fixtures need detail-level fields:
-    # description, listed_ago_text, seller_*, image_count, sweep)
+    # description, listed_ago_text, seller_*, image_count, sweep; optional
+    # image_paths = extra gallery photos, list or JSON string)
     targets = cfg.active_targets()
     if not targets:
         print("no active targets", file=sys.stderr)
@@ -943,6 +1033,7 @@ def main(argv=None):
     c.add_argument("--once", action="store_true", help="bypass pacing gate/pre-sleep (manual run)")
     c.add_argument("--dry-run", action="store_true", help="separate DB, no emails, render previews")
     c.add_argument("--query", help="ad-hoc single search query (selector testing)")
+    c.add_argument("--target", help="target id to evaluate --query against (default: first active)")
     c.set_defaults(fn=cmd_cycle)
 
     d = sub.add_parser("digest", help="send the daily digest")

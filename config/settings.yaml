@@ -14,6 +14,9 @@ limits:
   max_searches_per_cycle: 6      # hard cap; actual count drawn per-cycle (see pacing)
   max_detail_fetches_per_cycle: 5
   triage_batch_max: 40           # max new listings per stage-1 claude call
+  max_detail_images: 4           # gallery photos saved per detail fetch (beyond the
+                                 # card thumbnail) for stage 2 to consult when the
+                                 # thumbnail is inconclusive; 0 disables
 
 pacing:
   active_hours: [6.5, 23.0]      # no FB traffic outside this window (local time)
@@ -44,10 +47,11 @@ pacing:
   decoy_probability: 0.10          # open one random listing for no reason
 
 evaluation:
-  claude_timeout_seconds: 300    # headroom for the photo-interpretation layer
+  claude_timeout_seconds: 420    # headroom for the photo-interpretation layer
+                                 # (stage 2 may Read several gallery photos per listing)
   hot_min_confidence: 0.6
   digest_min_confidence: 0.4     # stage-1 matches below this are dropped, not digested
-  # model: claude-sonnet-5      # optional pin for the claude -p calls; unset = CLI default
+  model: claude-opus-5-5         # pinned model for the claude -p calls; comment out for CLI default
 
 # "Worth an offer" candidates: listings priced above the target's bargain level
 # but old enough that the seller may take less — surfaced in their own digest
@@ -70,6 +74,9 @@ retention:
 
 alerts:
   digest_hour: 18
+  external_digest: false         # per-target email: recipients get HOT alerts only;
+                                 # their digest/offer sections go to the owner. true =
+                                 # route digest sections to them as well
   daily_summary: true            # owner's digest always includes a 24h ops summary
                                  # + copies of sections routed to other recipients,
                                  # and is sent daily even when no listings matched

@@ -8,6 +8,8 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import smtplib
+import socket
+import time
 from email.message import EmailMessage
 from email.utils import make_msgid
 from pathlib import Path
@@ -43,21 +45,51 @@ def build_html_email(email_cfg, subject: str, html: str, inline_images: dict[str
     return msg
 
 
+# Transient: the machine's DNS or network was briefly unavailable, or Gmail
+# dropped the connection. Retrying inside the run beats the caller's
+# retry-tomorrow fallback, which costs a whole day of the digest.
+_RETRYABLE = (socket.gaierror, smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected,
+              TimeoutError, ConnectionError, OSError)
+_SEND_BACKOFF = (5, 20)  # seconds before attempts 2 and 3
+# Socket timeout. Since Python 3.5 this caps the whole sendall() of the
+# message, not each chunk — a ~1.3MB digest over a slow uplink overran 30s
+# and failed as "Server not connected" (Sep 2026).
+_SEND_TIMEOUT = 120
+
+
 def send(email_cfg, msg: EmailMessage):
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as s:
-        s.login(email_cfg.address, email_cfg.app_password)
-        s.send_message(msg)
+    """Send one message, retrying transient network failures. Auth and recipient
+    errors are permanent — they raise on the first attempt so the caller can roll
+    its alert claim back immediately."""
+    for attempt, pause in enumerate((*_SEND_BACKOFF, None), start=1):
+        try:
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=_SEND_TIMEOUT) as s:
+                s.login(email_cfg.address, email_cfg.app_password)
+                s.send_message(msg)
+            return
+        except (smtplib.SMTPAuthenticationError, smtplib.SMTPRecipientsRefused,
+                smtplib.SMTPSenderRefused):
+            raise
+        except _RETRYABLE as e:
+            if pause is None:
+                raise
+            log.warning("smtp send attempt %d failed (%s) — retrying in %ds",
+                        attempt, e, pause)
+            time.sleep(pause)
 
 
 def compose_hot(email_cfg, listing: dict, ev: dict, target_id: str,
                 to: str | None = None) -> EmailMessage:
     est = ev.get("est_value_aud")
-    subject = f"🔥 FB MP: {listing.get('title') or 'listing'} — {listing.get('price_text') or '?'}"
+    # The fire icon marks a genuine steal only; at/below-market finds are still
+    # emailed on the spot, just without the flag.
+    flag = "🔥 " if ev.get("bargain_rating") == "well_below_market" else ""
+    subject = f"{flag}FB MP: {listing.get('title') or 'listing'} — {listing.get('price_text') or '?'}"
     if est:
         subject += f" (est ${est})"
     cid = new_cid(listing.get("thumb_path"))
     html = _env.get_template("hot.html.j2").render(
-        l=listing, ev=ev, target_id=target_id, thumb_cid=cid
+        l=listing, ev=ev, target_id=target_id, thumb_cid=cid, flag=flag
     )
     images = {cid: listing["thumb_path"]} if cid else {}
     return build_html_email(email_cfg, subject, html, images, to=to)

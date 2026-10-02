@@ -107,6 +107,7 @@ class Store:
             ("listings", "revisited_at", "INTEGER"),  # negotiation revisit, at most once
             ("evaluations", "negotiation", "INTEGER DEFAULT 0"),
             ("evaluations", "suggested_offer_aud", "INTEGER"),
+            ("listings", "image_paths", "TEXT"),  # JSON array of gallery photos saved at detail fetch
         ]:
             cols = [r[1] for r in self.db.execute(f"PRAGMA table_info({table})")]
             if col not in cols:
@@ -158,12 +159,14 @@ class Store:
     def save_detail(self, listing_id: str, detail: dict):
         self.db.execute(
             """UPDATE listings SET detail_fetched_at=?, description=?, listed_ago_text=?,
-               seller_name=?, seller_joined_year=?, image_count=?, raw_detail_json=?
-               WHERE listing_id=?""",
+               seller_name=?, seller_joined_year=?, image_count=?, image_paths=?,
+               raw_detail_json=? WHERE listing_id=?""",
             (
                 int(time.time()), detail.get("description"), detail.get("listed_ago_text"),
                 detail.get("seller_name"), detail.get("seller_joined_year"),
-                detail.get("image_count"), json.dumps(detail), listing_id,
+                detail.get("image_count"),
+                json.dumps(detail["image_paths"]) if detail.get("image_paths") else None,
+                json.dumps(detail), listing_id,
             ),
         )
         self.db.commit()
@@ -202,10 +205,14 @@ class Store:
                            limit: int = 20) -> list[sqlite3.Row]:
         """Digested-and-reported matches that have aged into the negotiation
         window and were never revisited or offered before, oldest first (closest
-        to aging out). Rating/price/target filters are the caller's job."""
+        to aging out). Rating/price/target filters are the caller's job — and the
+        caller must dispose of every row it looks at (promote or retire), since
+        this scan is a capped window over an oldest-first ordering: a row left
+        undisposed comes back at the head every cycle and starves the rest."""
         now = int(time.time())
         return self.db.execute(
-            """SELECT l.*, e.target_id AS eval_target_id, e.bargain_rating AS eval_rating
+            """SELECT l.*, e.target_id AS eval_target_id, e.bargain_rating AS eval_rating,
+                      e.confidence AS eval_confidence
                FROM listings l
                JOIN digest_queue q ON q.listing_id = l.listing_id AND q.sent_at IS NOT NULL
                JOIN evaluations e ON e.id = (SELECT MAX(id) FROM evaluations
@@ -225,6 +232,17 @@ class Store:
         """Promote an aged listing back into the detail-fetch pipeline (once ever)."""
         self.db.execute(
             "UPDATE listings SET revisited_at=?, status='shortlisted' WHERE listing_id=?",
+            (int(time.time()), listing_id),
+        )
+        self.db.commit()
+
+    def retire_revisit(self, listing_id: str):
+        """Mark an aged listing as considered-and-declined for revisit, leaving it
+        digested. Same once-ever stamp as mark_revisited, without the promotion —
+        it just takes a permanently ineligible row out of the candidate scan so it
+        stops blocking younger ones."""
+        self.db.execute(
+            "UPDATE listings SET revisited_at=? WHERE listing_id=?",
             (int(time.time()), listing_id),
         )
         self.db.commit()

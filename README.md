@@ -5,8 +5,8 @@ rhythm for listings matching your `config/targets.yaml` watch list, uses Claude
 (headless `claude -p`, your existing subscription) to fuzzy-match listings —
 reading the photos, not just the titles — estimate market value, rate the
 bargain, and flag dubious sellers. HOT listings email immediately; everything
-else lands in a daily digest, routable per target to different recipients,
-with a full oversight copy + operations summary to the owner. Nothing is ever
+else lands in the owner's daily digest with an operations summary. Hot
+alerts are routable per target to different recipients. Nothing is ever
 reported twice in the same capacity (hot / digest / offer).
 
 > **Heads up:** automating your own logged-in FB account is against Facebook's
@@ -56,10 +56,13 @@ every disposition passes a code-enforced gate with thresholds from
   downloaded thumbnail; Claude views it and photos override titles for
   physical attributes (axle count, cage fitted, model variant, condition) and
   feed the scam checks. A "tandem trailer" showing one wheel per side is
-  single-axle, whatever the seller typed.
+  single-axle, whatever the seller typed. At the detail stage the rest of the
+  photo gallery (up to 4 images, higher resolution) is saved alongside the
+  thumbnail; Claude opens additional photos only when the thumbnail leaves an
+  attribute, the item's identity, or a scam check unsettled.
 - **Stage 2 — verdict.** Shortlisted listings get one detail-page fetch
-  (description, seller join year, listing age, photo count; ≤5 per cycle,
-  best-margin first), then a final verdict. **hot** = matches ∧ meets your
+  (description, seller join year, listing age, photo count, gallery photos;
+  ≤5 per cycle, best-margin first), then a final verdict. **hot** = matches ∧ meets your
   bargain level ∧ nothing dubious ∧ confidence ≥ 0.6 → immediate email.
 - **Scam screening.** Dubious *matches* land in the digest's "⚠ flagged"
   section, never hot. Signals must corroborate: a great price alone never
@@ -75,9 +78,11 @@ every disposition passes a code-enforced gate with thresholds from
   failure. Nothing ever repeats within a kind; a digested near-miss may
   return once as an offer (or hot) via the revisit path.
 - **Routing & oversight.** A target may set `email:` to route its hot alerts
-  and digest sections to someone else. The owner's daily email always carries
-  the full picture: their own sections, labeled copies of everything routed
-  elsewhere, and a 24-hour operations summary (cycles, match/verdict stats,
+  to someone else; external recipients get hot alerts only, and that target's
+  digest and offer sections stay in the owner's email
+  (`alerts.external_digest: true` routes those too, with labeled copies kept
+  for the owner). The owner's daily email always carries the full picture
+  and a 24-hour operations summary (cycles, match/verdict stats,
   alerts, pipeline backlog) — sent daily even when nothing matched.
 - **Ad-hoc valuation.** `fbmp value <listing-url>` prints an estimated
   second-hand value range for any listing — zero FB traffic when the listing

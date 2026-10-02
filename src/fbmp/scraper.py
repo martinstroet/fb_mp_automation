@@ -252,6 +252,46 @@ def scrape_detail(page: Page) -> dict:
     return detail
 
 
+def scrape_detail_image_urls(page: Page, limit: int = 4) -> list[str]:
+    """Full-size gallery image URLs from the open detail page, document order.
+    Images at/after the recommendation rail ("More like this" etc.) are dropped
+    when the rail heading can be found; the same size floor as image_count
+    keeps rail thumbnails out regardless. Best effort — [] on any failure."""
+    try:
+        urls = page.evaluate(
+            """() => {
+                const root = document.querySelector('div[role="main"]') || document.body;
+                // first short heading-like node marks where the rail starts
+                let cutoff = null;
+                for (const el of root.querySelectorAll("span, h2, div")) {
+                    if (el.children.length >= 3) continue;
+                    const t = (el.innerText || "").trim();
+                    if (t.length < 40 &&
+                        /^(More like this|Today's picks|Just listed|Sponsored)/.test(t)) {
+                        cutoff = el;
+                        break;
+                    }
+                }
+                const out = [], seen = new Set();
+                for (const img of root.querySelectorAll('img[src*="scontent"]')) {
+                    if (cutoff &&
+                        (cutoff.compareDocumentPosition(img) & Node.DOCUMENT_POSITION_FOLLOWING))
+                        continue;
+                    if (img.naturalWidth < 350 || img.naturalHeight < 250) continue;
+                    const key = img.src.split("?")[0];
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    out.push(img.src);
+                }
+                return out;
+            }"""
+        ) or []
+        return urls[:limit]
+    except Exception as e:
+        log.debug("detail image scrape failed: %s", e)
+        return []
+
+
 def dump_debug(cfg, page: Page, tag: str) -> Path:
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     outdir = cfg.debug_dir / f"{stamp}-{tag}"
